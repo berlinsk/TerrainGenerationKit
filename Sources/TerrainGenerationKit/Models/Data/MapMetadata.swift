@@ -2,20 +2,28 @@ import Foundation
 
 public struct MapMetadata: Codable, Sendable {
     
-    public var name: String
-    public var createdAt: Date
-    public var generationTime: TimeInterval
+    public var seed: UInt64
+    public var width: Int
+    public var height: Int
+    public var generationDate: Date
+    public var generationTimeMs: Int
     public var settings: GenerationSettings
+    public var statistics: MapStatistics
     
     public init(
-        name: String = "Untitled Map",
-        createdAt: Date = Date(),
-        generationTime: TimeInterval = 0,
-        settings: GenerationSettings = .default
+        seed: UInt64,
+        width: Int,
+        height: Int,
+        settings: GenerationSettings,
+        generationTimeMs: Int = 0,
+        statistics: MapStatistics = MapStatistics()
     ) {
-        self.name = name
-        self.createdAt = createdAt
-        self.generationTime = generationTime
+        self.seed = seed
+        self.width = width
+        self.height = height
+        self.generationDate = Date()
+        self.generationTimeMs = generationTimeMs
         self.settings = settings
+        self.statistics = statistics
     }
 }

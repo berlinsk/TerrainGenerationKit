@@ -29,6 +29,7 @@ public final class MapGenerator: MapGeneratorProtocol, @unchecked Sendable {
         let width = settings.width
         let height = settings.height
         let noiseSeed = NoiseSeed(seed)
+        let startTime = CFAbsoluteTimeGetCurrent()
         
         func report(_ stage: GenerationStage, _ progress: Float, _ message: String) {
             progressHandler?(GenerationProgress(stage: stage, progress: progress, message: message))
@@ -119,27 +120,22 @@ public final class MapGenerator: MapGeneratorProtocol, @unchecked Sendable {
         report(.biomes, 0.78, "Biome distribution complete")
         
         var mapData = MapData(
-            seed: seed,
             width: width,
             height: height,
-            heightmap: heightmap,
-            biomeMap: biomeMap,
-            temperatureMap: temperatureMap,
-            humidityMap: humidityMap,
-            waterData: waterData
+            seed: seed,
+            settings: settings
         )
+        mapData.heightmap = heightmap
+        mapData.temperatureMap = temperatureMap
+        mapData.humidityMap = humidityMap
+        mapData.biomeMap = biomeMap
+        mapData.waterData = waterData
         
         report(.objects, 0.78, "Analyzing placement zones...")
         
         report(.objects, 0.80, "Placing trees and vegetation...")
         mapData.objectLayer = objectScatterService.scatterObjects(
-            heightmap: heightmap,
-            biomeMap: biomeMap,
-            temperatureMap: temperatureMap,
-            humidityMap: humidityMap,
-            waterData: waterData,
-            width: width,
-            height: height,
+            mapData: mapData,
             params: settings.objects,
             seed: noiseSeed.derive(5)
         )
@@ -172,49 +168,12 @@ public final class MapGenerator: MapGeneratorProtocol, @unchecked Sendable {
         report(.postProcessing, 0.96, "Post-processing complete")
         
         report(.rendering, 0.97, "Calculating statistics...")
-        mapData.statistics = calculateStatistics(mapData: mapData, settings: settings)
+        let generationTimeMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
+        mapData.updateStatistics(generationTimeMs: generationTimeMs)
         
         report(.rendering, 0.99, "Preparing render...")
         report(.complete, 1.0, "Generation complete!")
         
         return mapData
-    }
-    
-    private func calculateStatistics(mapData: MapData, settings: GenerationSettings) -> MapStatistics {
-        var stats = MapStatistics()
-        
-        let totalPixels = mapData.width * mapData.height
-        var waterCount = 0
-        var biomeCount: [BiomeType: Int] = [:]
-        var minH: Float = 1
-        var maxH: Float = 0
-        var sumH: Float = 0
-        
-        for i in 0..<totalPixels {
-            let h = mapData.heightmap[i]
-            let biome = mapData.biomeMap[i]
-            
-            minH = min(minH, h)
-            maxH = max(maxH, h)
-            sumH += h
-            
-            if biome.isWater {
-                waterCount += 1
-            }
-            
-            biomeCount[biome, default: 0] += 1
-        }
-        
-        stats.minHeight = minH
-        stats.maxHeight = maxH
-        stats.averageHeight = sumH / Float(totalPixels)
-        stats.waterPercentage = Float(waterCount) / Float(totalPixels) * 100
-        stats.landPercentage = 100 - stats.waterPercentage
-        
-        for (biome, count) in biomeCount {
-            stats.biomeDistribution[biome] = Float(count) / Float(totalPixels) * 100
-        }
-        
-        return stats
     }
 }

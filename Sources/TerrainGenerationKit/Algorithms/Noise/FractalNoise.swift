@@ -3,6 +3,15 @@ import simd
 
 public final class FractalNoise: @unchecked Sendable {
     
+    public enum NoiseType {
+        case perlin
+        case simplex
+        case openSimplex
+        case voronoi
+        case ridged
+        case billow
+    }
+    
     private let seed: UInt64
     private let permutation: [Int]
     private let gradients2D: [SIMD2<Float>]
@@ -29,12 +38,28 @@ public final class FractalNoise: @unchecked Sendable {
     public func generateNoiseMap(width: Int, height: Int, parameters: NoiseParameters) -> [Float] {
         var result = [Float](repeating: 0, count: width * height)
         
+        let type: NoiseType
+        switch parameters.type {
+        case .simplex:
+            type = .simplex
+        case .perlin:
+            type = .perlin
+        case .openSimplex:
+            type = .openSimplex
+        case .voronoi:
+            type = .voronoi
+        case .ridged:
+            type = .ridged
+        case .billow:
+            type = .billow
+        }
+        
         DispatchQueue.concurrentPerform(iterations: height) { y in
             for x in 0..<width {
                 let value = fbm(
                     x: Float(x),
                     y: Float(y),
-                    type: parameters.type,
+                    type: type,
                     octaves: parameters.octaves,
                     frequency: parameters.frequency,
                     persistence: parameters.persistence,

@@ -65,7 +65,10 @@ public final class WaterFlowSimulator: @unchecked Sendable {
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                waterData.flowDirection[idx] = flowDirections[idx].rawValue
+                let dir = flowDirections[idx]
+                let offset = dir.offset
+                waterData.flowDirectionX[idx] = Float(offset.dx)
+                waterData.flowDirectionY[idx] = Float(offset.dy)
             }
         }
         
@@ -232,7 +235,7 @@ public final class WaterFlowSimulator: @unchecked Sendable {
             visited.insert(idx)
             
             waterData.riverMask[idx] = 1.0
-            waterData.waterLevel[idx] = riverWidth
+            waterData.waterDepth[idx] = riverWidth
             
             riverWidth = min(riverWidth + 0.001, params.riverWidth * 2)
             
@@ -444,7 +447,7 @@ public final class WaterFlowSimulator: @unchecked Sendable {
         if lakePixels.count >= params.lakeMinSize {
             for idx in lakePixels {
                 waterData.lakeMask[idx] = 1.0
-                waterData.waterLevel[idx] = waterLevel - heightmap[idx]
+                waterData.waterDepth[idx] = waterLevel - heightmap[idx]
             }
         }
     }

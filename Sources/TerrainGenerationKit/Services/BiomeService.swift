@@ -11,7 +11,7 @@ public protocol BiomeServiceProtocol: Sendable {
         height: Int,
         params: BiomeParameters,
         selection: BiomeSelection
-    ) -> [BiomeType]
+    ) -> [UInt8]
     
     func generateTemperatureMap(
         heightmap: [Float],
@@ -47,9 +47,9 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
         height: Int,
         params: BiomeParameters,
         selection: BiomeSelection
-    ) -> [BiomeType] {
+    ) -> [UInt8] {
         let classifier = BiomeClassifier(parameters: params)
-        var biomeMap = [BiomeType](repeating: .ocean, count: width * height)
+        var biomeMap = [UInt8](repeating: 0, count: width * height)
         
         DispatchQueue.concurrentPerform(iterations: height) { y in
             for x in 0..<width {
@@ -59,15 +59,15 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
                     height: heightmap[idx],
                     temperature: temperatureMap[idx],
                     humidity: humidityMap[idx],
-                    isRiver: waterData.riverMask[idx] > 0.5,
-                    isLake: waterData.lakeMask[idx] > 0.5
+                    isRiver: waterData.isRiver(at: x, y: y),
+                    isLake: waterData.isLake(at: x, y: y)
                 )
                 
                 if !selection.isEnabled(biome) {
                     biome = findAlternativeBiome(for: biome, selection: selection)
                 }
                 
-                biomeMap[idx] = biome
+                biomeMap[idx] = UInt8(biome.rawValue)
             }
         }
         
@@ -273,7 +273,7 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
     }
     
     private func smoothBiomeTransitions(
-        biomeMap: inout [BiomeType],
+        biomeMap: inout [UInt8],
         heightmap: [Float],
         width: Int,
         height: Int,
@@ -284,14 +284,14 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
         for y in 1..<(height - 1) {
             for x in 1..<(width - 1) {
                 let idx = y * width + x
-                let currentBiome = biomeMap[idx]
+                let currentBiome = BiomeType(rawValue: Int(biomeMap[idx])) ?? .ocean
                 
                 if currentBiome.isWater {
                     continue
                 }
                 
-                var biomeCounts: [BiomeType: Int] = [:]
-                biomeCounts[biomeMap[idx]] = 2
+                var biomeCounts: [Int: Int] = [:]
+                biomeCounts[Int(biomeMap[idx])] = 2
                 
                 for dy in -1...1 {
                     for dx in -1...1 {
@@ -300,17 +300,17 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
                         }
                         
                         let nidx = (y + dy) * width + (x + dx)
-                        let neighborBiome = biomeMap[nidx]
+                        let neighborBiome = Int(biomeMap[nidx])
                         
-                        if !neighborBiome.isWater {
+                        if let biome = BiomeType(rawValue: neighborBiome), !biome.isWater {
                             biomeCounts[neighborBiome, default: 0] += 1
                         }
                     }
                 }
                 
                 if let mostCommon = biomeCounts.max(by: { $0.value < $1.value }) {
-                    if mostCommon.value >= 5 && mostCommon.key != biomeMap[idx] {
-                        smoothed[idx] = mostCommon.key
+                    if mostCommon.value >= 5 && mostCommon.key != Int(biomeMap[idx]) {
+                        smoothed[idx] = UInt8(mostCommon.key)
                     }
                 }
             }

@@ -30,7 +30,7 @@ public final class RoadGenerator: @unchecked Sendable {
     public func generateRoads(
         cities: [City],
         heightmap: [Float],
-        biomeMap: [BiomeType],
+        biomeMap: [UInt8],
         waterData: WaterData,
         width: Int,
         height: Int,
@@ -135,7 +135,7 @@ public final class RoadGenerator: @unchecked Sendable {
     
     private func buildCostMap(
         heightmap: [Float],
-        biomeMap: [BiomeType],
+        biomeMap: [UInt8],
         waterData: WaterData,
         cities: [City],
         width: Int,
@@ -158,7 +158,7 @@ public final class RoadGenerator: @unchecked Sendable {
             for x in 0..<width {
                 let idx = y * width + x
                 let h = heightmap[idx]
-                let biome = biomeMap[idx]
+                let biome = BiomeType(rawValue: Int(biomeMap[idx])) ?? .grassland
                 
                 var cost: Float = TerrainCost.plain
                 
