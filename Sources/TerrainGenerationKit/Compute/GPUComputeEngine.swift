@@ -12,6 +12,8 @@ public final class GPUComputeEngine: @unchecked Sendable {
     private var jfaInitPipeline: MTLComputePipelineState?
     private var jfaStepPipeline: MTLComputePipelineState?
     private var jfaFinalizePipeline: MTLComputePipelineState?
+    private var poissonPipeline: MTLComputePipelineState?
+    private var objectPlacementPipeline: MTLComputePipelineState?
     
     public init?() {
         guard let device = MTLCreateSystemDefaultDevice(),
@@ -47,6 +49,14 @@ public final class GPUComputeEngine: @unchecked Sendable {
         
         if let function = library.makeFunction(name: "jumpFloodFinalize") {
             jfaFinalizePipeline = try? device.makeComputePipelineState(function: function)
+        }
+        
+        if let function = library.makeFunction(name: "poissonDiskSample") {
+            poissonPipeline = try? device.makeComputePipelineState(function: function)
+        }
+        
+        if let function = library.makeFunction(name: "placeObjects") {
+            objectPlacementPipeline = try? device.makeComputePipelineState(function: function)
         }
     }
     
@@ -123,6 +133,28 @@ public final class GPUComputeEngine: @unchecked Sendable {
         var height: UInt32
         var step: Int32
         var _padding: Int32 = 0
+    }
+    
+    struct PoissonParams {
+        var width: UInt32
+        var height: UInt32
+        var minDistance: Float
+        var cellSize: Float
+        var gridWidth: UInt32
+        var gridHeight: UInt32
+        var seed: UInt32
+        var maxAttempts: UInt32
+    }
+    
+    struct ObjectPlacementParams {
+        var width: UInt32
+        var height: UInt32
+        var seaLevel: Float
+        var treeDensity: Float
+        var rockDensity: Float
+        var vegetationDensity: Float
+        var structureDensity: Float
+        var seed: UInt32
     }
     
     public func computeRoadSDF(
