@@ -31,7 +31,7 @@ public final class CityGenerator: @unchecked Sendable {
     
     public func generateCities(
         heightmap: [Float],
-        biomeMap: [BiomeType],
+        biomeMap: [UInt8],
         waterData: WaterData,
         width: Int,
         height: Int,
@@ -149,7 +149,7 @@ public final class CityGenerator: @unchecked Sendable {
     
     private func findCityLocations(
         heightmap: [Float],
-        biomeMap: [BiomeType],
+        biomeMap: [UInt8],
         riverDistanceMap: [Int],
         coastDistanceMap: [Int],
         width: Int,
@@ -163,7 +163,7 @@ public final class CityGenerator: @unchecked Sendable {
             for x in stride(from: gridStep, to: width - gridStep, by: gridStep) {
                 let idx = y * width + x
                 let h = heightmap[idx]
-                let biome = biomeMap[idx]
+                let biome = BiomeType(rawValue: Int(biomeMap[idx])) ?? .grassland
                 
                 if h < seaLevel || biome.isWater {
                     continue

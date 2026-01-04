@@ -8,7 +8,3 @@ public enum TerrainGenerationKit {
         return MapGenerator()
     }
 }
-
-@_exported import struct simd.SIMD2
-@_exported import struct simd.SIMD3
-@_exported import struct simd.SIMD4

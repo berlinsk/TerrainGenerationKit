@@ -1,93 +1,119 @@
 import Foundation
 import simd
 
-public struct MapData: Codable, Sendable {
-    
-    public let width: Int
-    public let height: Int
-    public let seed: UInt64
+public struct MapData: Sendable {
     
     public var heightmap: [Float]
-    public var biomeMap: [BiomeType]
+    public var biomeMap: [UInt8]
     public var temperatureMap: [Float]
     public var humidityMap: [Float]
     public var waterData: WaterData
     public var objectLayer: ObjectLayer
     public var cityNetwork: CityNetworkData
+    
+    public let width: Int
+    public let height: Int
+    public let seed: UInt64
+    
     public var metadata: MapMetadata
     
-    public init(width: Int, height: Int, seed: UInt64) {
+    public init(width: Int, height: Int, seed: UInt64, settings: GenerationSettings) {
         self.width = width
         self.height = height
         self.seed = seed
         
-        let size = width * height
-        self.heightmap = [Float](repeating: 0, count: size)
-        self.biomeMap = [BiomeType](repeating: .ocean, count: size)
-        self.temperatureMap = [Float](repeating: 0.5, count: size)
-        self.humidityMap = [Float](repeating: 0.5, count: size)
+        let count = width * height
+        self.heightmap = [Float](repeating: 0, count: count)
+        self.biomeMap = [UInt8](repeating: 0, count: count)
+        self.temperatureMap = [Float](repeating: 0.5, count: count)
+        self.humidityMap = [Float](repeating: 0.5, count: count)
         self.waterData = WaterData(width: width, height: height)
         self.objectLayer = ObjectLayer(width: width, height: height)
         self.cityNetwork = CityNetworkData(width: width, height: height)
-        self.metadata = MapMetadata()
+        self.metadata = MapMetadata(seed: seed, width: width, height: height, settings: settings)
     }
     
-    public func index(x: Int, y: Int) -> Int {
-        y * width + x
-    }
-    
-    public func coordinates(index: Int) -> (x: Int, y: Int) {
-        (index % width, index / width)
-    }
-    
-    public func isValid(x: Int, y: Int) -> Bool {
-        x >= 0 && x < width && y >= 0 && y < height
-    }
-    
-    public func height(at x: Int, _ y: Int) -> Float {
-        guard isValid(x: x, y: y) else {
+    public func height(at x: Int, y: Int) -> Float {
+        guard x >= 0 && x < width && y >= 0 && y < height else {
             return 0
         }
-        return heightmap[index(x: x, y: y)]
+        return heightmap[y * width + x]
     }
     
-    public func biome(at x: Int, _ y: Int) -> BiomeType {
-        guard isValid(x: x, y: y) else {
+    public func biome(at x: Int, y: Int) -> BiomeType {
+        guard x >= 0 && x < width && y >= 0 && y < height else {
             return .ocean
         }
-        return biomeMap[index(x: x, y: y)]
+        return BiomeType(rawValue: Int(biomeMap[y * width + x])) ?? .ocean
     }
     
-    public func calculateStatistics() -> MapStatistics {
-        var stats = MapStatistics()
-        
-        var minH: Float = .greatestFiniteMagnitude
-        var maxH: Float = -.greatestFiniteMagnitude
-        var sumH: Float = 0
-        var waterCount = 0
-        
-        for i in 0..<heightmap.count {
-            let h = heightmap[i]
-            minH = min(minH, h)
-            maxH = max(maxH, h)
-            sumH += h
-            
-            let biome = biomeMap[i]
-            stats.biomeCounts[biome, default: 0] += 1
-            
-            if biome.isWater {
-                waterCount += 1
-            }
+    public func temperature(at x: Int, y: Int) -> Float {
+        guard x >= 0 && x < width && y >= 0 && y < height else {
+            return 0.5
         }
+        return temperatureMap[y * width + x]
+    }
+    
+    public func humidity(at x: Int, y: Int) -> Float {
+        guard x >= 0 && x < width && y >= 0 && y < height else {
+            return 0.5
+        }
+        return humidityMap[y * width + x]
+    }
+    
+    public mutating func setHeight(_ value: Float, at x: Int, y: Int) {
+        guard x >= 0 && x < width && y >= 0 && y < height else {
+            return
+        }
+        heightmap[y * width + x] = value
+    }
+    
+    public mutating func setBiome(_ biome: BiomeType, at x: Int, y: Int) {
+        guard x >= 0 && x < width && y >= 0 && y < height else {
+            return
+        }
+        biomeMap[y * width + x] = UInt8(biome.rawValue)
+    }
+    
+    public func gradient(at x: Int, y: Int) -> SIMD2<Float> {
+        let left = height(at: x - 1, y: y)
+        let right = height(at: x + 1, y: y)
+        let up = height(at: x, y: y - 1)
+        let down = height(at: x, y: y + 1)
         
-        stats.minHeight = minH
-        stats.maxHeight = maxH
-        stats.averageHeight = sumH / Float(heightmap.count)
-        stats.waterCoverage = Float(waterCount) / Float(heightmap.count)
-        stats.objectCounts = objectLayer.statistics
-        stats.cityCount = cityNetwork.cities.count
-        stats.roadCount = cityNetwork.roads.count
+        return SIMD2<Float>(right - left, down - up) * 0.5
+    }
+    
+    public func steepness(at x: Int, y: Int) -> Float {
+        let grad = gradient(at: x, y: y)
+        return sqrt(grad.x * grad.x + grad.y * grad.y)
+    }
+    
+    public func sampleHeight(at position: SIMD2<Float>) -> Float {
+        let x = position.x
+        let y = position.y
         
-        return stats
+        let x0 = Int(floor(x))
+        let y0 = Int(floor(y))
+        let x1 = x0 + 1
+        let y1 = y0 + 1
+        
+        let fx = x - Float(x0)
+        let fy = y - Float(y0)
+        
+        let h00 = height(at: x0, y: y0)
+        let h10 = height(at: x1, y: y0)
+        let h01 = height(at: x0, y: y1)
+        let h11 = height(at: x1, y: y1)
+        
+        let h0 = h00 * (1 - fx) + h10 * fx
+        let h1 = h01 * (1 - fx) + h11 * fx
+        
+        return h0 * (1 - fy) + h1 * fy
+    }
+    
+    public mutating func updateStatistics(generationTimeMs: Int) {
+        metadata.generationTimeMs = generationTimeMs
+        metadata.statistics.calculate(from: self)
     }
 }

@@ -12,11 +12,7 @@ public final class ObjectScatterEngine: @unchecked Sendable {
     }
     
     public func scatter(
-        heightmap: [Float],
-        biomeMap: [BiomeType],
-        temperatureMap: [Float],
-        humidityMap: [Float],
-        waterData: WaterData,
+        mapData: MapData,
         width: Int,
         height: Int
     ) -> ObjectLayer {
@@ -39,15 +35,11 @@ public final class ObjectScatterEngine: @unchecked Sendable {
             }
             
             let idx = y * width + x
-            let biome = biomeMap[idx]
-            let heightValue = heightmap[idx]
-            let slope = calculateSlope(heightmap: heightmap, x: x, y: y, width: width, height: height)
+            let biome = BiomeType(rawValue: Int(mapData.biomeMap[idx])) ?? .ocean
+            let heightValue = mapData.heightmap[idx]
+            let slope = mapData.steepness(at: x, y: y)
             
-            if biome.isWater {
-                continue
-            }
-            
-            if waterData.riverMask[idx] > 0.5 {
+            if biome.isWater || mapData.waterData.isRiver(at: x, y: y) {
                 continue
             }
             
@@ -55,8 +47,8 @@ public final class ObjectScatterEngine: @unchecked Sendable {
                 biome: biome,
                 height: heightValue,
                 slope: slope,
-                temperature: temperatureMap[idx],
-                humidity: humidityMap[idx]
+                temperature: mapData.temperature(at: x, y: y),
+                humidity: mapData.humidity(at: x, y: y)
             ) {
                 let density = calculateDensity(
                     rule: rule,
@@ -79,8 +71,7 @@ public final class ObjectScatterEngine: @unchecked Sendable {
                             around: point,
                             type: objectType,
                             rule: rule,
-                            heightmap: heightmap,
-                            biomeMap: biomeMap,
+                            mapData: mapData,
                             objectLayer: &objectLayer,
                             width: width,
                             height: height
@@ -91,22 +82,6 @@ public final class ObjectScatterEngine: @unchecked Sendable {
         }
         
         return objectLayer
-    }
-    
-    private func calculateSlope(heightmap: [Float], x: Int, y: Int, width: Int, height: Int) -> Float {
-        let h = heightmap[y * width + x]
-        var maxDiff: Float = 0
-        
-        for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-            let nx = x + dx
-            let ny = y + dy
-            if nx >= 0 && nx < width && ny >= 0 && ny < height {
-                let nh = heightmap[ny * width + nx]
-                maxDiff = max(maxDiff, abs(h - nh))
-            }
-        }
-        
-        return maxDiff
     }
     
     private func selectObjectType(
@@ -205,8 +180,7 @@ public final class ObjectScatterEngine: @unchecked Sendable {
         around center: SIMD2<Float>,
         type: MapObjectType,
         rule: ScatterRule,
-        heightmap: [Float],
-        biomeMap: [BiomeType],
+        mapData: MapData,
         objectLayer: inout ObjectLayer,
         width: Int,
         height: Int
@@ -232,8 +206,8 @@ public final class ObjectScatterEngine: @unchecked Sendable {
             }
             
             let idx = y * width + x
-            let biome = biomeMap[idx]
-            let heightValue = heightmap[idx]
+            let biome = BiomeType(rawValue: Int(mapData.biomeMap[idx])) ?? .ocean
+            let heightValue = mapData.heightmap[idx]
             
             if biome.isWater {
                 continue

@@ -4,7 +4,7 @@ import simd
 public protocol CityServiceProtocol: Sendable {
     func generateCityNetwork(
         heightmap: [Float],
-        biomeMap: [BiomeType],
+        biomeMap: [UInt8],
         waterData: WaterData,
         width: Int,
         height: Int,
@@ -20,7 +20,7 @@ public final class CityService: CityServiceProtocol, @unchecked Sendable {
     
     public func generateCityNetwork(
         heightmap: [Float],
-        biomeMap: [BiomeType],
+        biomeMap: [UInt8],
         waterData: WaterData,
         width: Int,
         height: Int,

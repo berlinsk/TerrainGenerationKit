@@ -281,6 +281,197 @@ public final class GPUComputeEngine: @unchecked Sendable {
         return results
     }
     
+    public func placeObjects(
+        candidates: [SIMD2<Float>],
+        heightmap: [Float],
+        biomeMap: [UInt8],
+        width: Int,
+        height: Int,
+        params: ObjectScatterParameters,
+        seaLevel: Float,
+        seed: UInt64
+    ) -> [MapObject] {
+        return placeObjectsCPU(
+            candidates: candidates,
+            heightmap: heightmap,
+            biomeMap: biomeMap,
+            width: width,
+            height: height,
+            params: params,
+            seaLevel: seaLevel,
+            seed: seed
+        )
+    }
+    
+    private func placeObjectsCPU(
+        candidates: [SIMD2<Float>],
+        heightmap: [Float],
+        biomeMap: [UInt8],
+        width: Int,
+        height: Int,
+        params: ObjectScatterParameters,
+        seaLevel: Float,
+        seed: UInt64
+    ) -> [MapObject] {
+        var rng = SeededRandom(seed: seed)
+        var objects: [MapObject] = []
+        objects.reserveCapacity(candidates.count / 4)
+        
+        for point in candidates {
+            let x = Int(point.x)
+            let y = Int(point.y)
+            guard x >= 0 && x < width && y >= 0 && y < height else {
+                continue
+            }
+            
+            let idx = y * width + x
+            guard idx < heightmap.count && idx < biomeMap.count else {
+                continue
+            }
+            
+            let h = heightmap[idx]
+            let biome = BiomeType(rawValue: Int(biomeMap[idx])) ?? .ocean
+            
+            if biome.isWater || h < seaLevel {
+                continue
+            }
+            
+            var slope: Float = 0
+            if x > 0 && x < width - 1 && y > 0 && y < height - 1 {
+                let hL = heightmap[idx - 1]
+                let hR = heightmap[idx + 1]
+                let hU = heightmap[idx - width]
+                let hD = heightmap[idx + width]
+                slope = max(abs(hR - hL), abs(hD - hU)) * 2.0
+            }
+            
+            if let objType = selectObjectForBiome(biome: biome, height: h, slope: slope, rng: &rng, params: params) {
+                let obj = MapObject(
+                    type: objType,
+                    position: point,
+                    height: h,
+                    scale: 0.7 + rng.nextFloat() * 0.6,
+                    rotation: rng.nextFloat() * .pi * 2,
+                    variation: rng.nextInt(in: 0...3)
+                )
+                objects.append(obj)
+            }
+        }
+        
+        return objects
+    }
+    
+    private func selectObjectForBiome(
+        biome: BiomeType,
+        height: Float,
+        slope: Float,
+        rng: inout SeededRandom,
+        params: ObjectScatterParameters
+    ) -> MapObjectType? {
+        let roll = rng.nextFloat()
+        
+        switch biome {
+        case .forest:
+            if roll < params.treeDensity * 0.25 {
+                return .oak
+            }
+            if roll < params.treeDensity * 0.35 {
+                return .pine
+            }
+            if roll < params.vegetationDensity * 0.15 {
+                return .bush
+            }
+        case .rainforest:
+            if roll < params.treeDensity * 0.35 {
+                return .oak
+            }
+            if roll < params.vegetationDensity * 0.25 {
+                return .bush
+            }
+            if roll < params.vegetationDensity * 0.35 {
+                return .flower
+            }
+        case .taiga:
+            if roll < params.treeDensity * 0.30 {
+                return .pine
+            }
+            if roll < params.rockDensity * 0.08 {
+                return .rock
+            }
+        case .grassland:
+            if roll < params.treeDensity * 0.08 {
+                return .oak
+            }
+            if roll < params.vegetationDensity * 0.20 {
+                return .grass
+            }
+            if roll < params.vegetationDensity * 0.28 {
+                return .flower
+            }
+        case .savanna:
+            if roll < params.treeDensity * 0.06 {
+                return .oak
+            }
+            if roll < params.vegetationDensity * 0.15 {
+                return .grass
+            }
+        case .desert:
+            if roll < params.vegetationDensity * 0.08 {
+                return .cactus
+            }
+            if roll < params.rockDensity * 0.12 {
+                return .rock
+            }
+        case .mountain:
+            if roll < params.rockDensity * 0.25 {
+                return slope > 0.15 ? .boulder : .rock
+            }
+            if roll < params.treeDensity * 0.05 && height < 0.75 {
+                return .pine
+            }
+        case .snowyMountain:
+            if roll < params.rockDensity * 0.20 {
+                return .boulder
+            }
+            if roll < params.rockDensity * 0.30 {
+                return .rock
+            }
+        case .beach:
+            if roll < params.treeDensity * 0.10 {
+                return .palm
+            }
+            if roll < params.rockDensity * 0.05 {
+                return .rock
+            }
+        case .tundra:
+            if roll < params.rockDensity * 0.12 {
+                return .rock
+            }
+            if roll < params.vegetationDensity * 0.08 {
+                return .grass
+            }
+        case .snow:
+            if roll < params.rockDensity * 0.08 {
+                return .rock
+            }
+        case .marsh:
+            if roll < params.vegetationDensity * 0.25 {
+                return .grass
+            }
+            if roll < params.vegetationDensity * 0.30 {
+                return .bush
+            }
+        default:
+            break
+        }
+        
+        if roll > 0.998 && params.structureDensity > 0.01 {
+            return rng.nextFloat() > 0.7 ? .tower : .ruin
+        }
+        
+        return nil
+    }
+    
     private func computeRoadSDFCPU(
         roadMask: [Float],
         width: Int,
