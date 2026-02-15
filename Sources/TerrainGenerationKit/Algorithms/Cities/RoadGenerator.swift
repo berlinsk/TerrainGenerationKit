@@ -321,7 +321,7 @@ public final class RoadGenerator: @unchecked Sendable {
             ))
         }
         
-        return fullPath.isEmpty ? nil : fullPath
+        return fullPath.last == goal ? fullPath : nil
     }
     
     private func findWaypoints(
