@@ -143,17 +143,7 @@ public final class RoadGenerator: @unchecked Sendable {
         seaLevel: Float
     ) -> [Float] {
         var costMap = [Float](repeating: 1, count: width * height)
-        
-        for city in cities {
-            for block in city.blocks {
-                for tile in block.occupiedTiles() {
-                    if tile.x >= 0 && tile.x < width && tile.y >= 0 && tile.y < height {
-                        costMap[tile.y * width + tile.x] = 50000
-                    }
-                }
-            }
-        }
-        
+
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
@@ -282,11 +272,12 @@ public final class RoadGenerator: @unchecked Sendable {
         let pathfinder = AStarPathfinder(costMap: costMap, width: width, height: height)
         
         for waypoint in waypoints {
+            let dist = abs(currentStart.x - waypoint.x) + abs(currentStart.y - waypoint.y)
             if let segment = pathfinder.findPath(
                 from: currentStart,
                 to: waypoint,
                 existingRoads: currentRoads,
-                maxIterations: 50000
+                maxIterations: max(10000, dist * dist)
             ) {
                 if !fullPath.isEmpty {
                     fullPath.removeLast()
@@ -295,23 +286,26 @@ public final class RoadGenerator: @unchecked Sendable {
                 for p in segment {
                     currentRoads.insert(p)
                 }
+                currentStart = waypoint
             } else {
-                fullPath.append(contentsOf: createSmartPath(
+                let smartSegment = createSmartPath(
                     from: currentStart,
                     to: waypoint,
                     costMap: costMap,
                     width: width,
                     height: height
-                ))
+                )
+                fullPath.append(contentsOf: smartSegment)
+                currentStart = smartSegment.last ?? waypoint
             }
-            currentStart = waypoint
         }
-        
+
+        let finalDist = abs(currentStart.x - goal.x) + abs(currentStart.y - goal.y)
         if let finalSegment = pathfinder.findPath(
             from: currentStart,
             to: goal,
             existingRoads: currentRoads,
-            maxIterations: 50000
+            maxIterations: max(10000, finalDist * finalDist)
         ) {
             if !fullPath.isEmpty {
                 fullPath.removeLast()
@@ -327,7 +321,7 @@ public final class RoadGenerator: @unchecked Sendable {
             ))
         }
         
-        return fullPath.isEmpty ? nil : fullPath
+        return fullPath.last == goal ? fullPath : nil
     }
     
     private func findWaypoints(
