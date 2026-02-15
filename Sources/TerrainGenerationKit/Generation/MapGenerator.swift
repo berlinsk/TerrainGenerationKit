@@ -165,8 +165,10 @@ public final class MapGenerator: MapGeneratorProtocol, @unchecked Sendable {
             mapData: &mapData,
             params: settings.postProcessing
         )
+        report(.postProcessing, 0.95, "Computing steepness map...")
+        mapData.computeSteepnessMap()
         report(.postProcessing, 0.96, "Post-processing complete")
-        
+
         report(.rendering, 0.97, "Calculating statistics...")
         let generationTimeMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
         mapData.updateStatistics(generationTimeMs: generationTimeMs)

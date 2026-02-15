@@ -7,6 +7,7 @@ public struct MapData: Sendable {
     public var biomeMap: [UInt8]
     public var temperatureMap: [Float]
     public var humidityMap: [Float]
+    public var steepnessMap: [Float]
     public var waterData: WaterData
     public var objectLayer: ObjectLayer
     public var cityNetwork: CityNetworkData
@@ -27,6 +28,7 @@ public struct MapData: Sendable {
         self.biomeMap = [UInt8](repeating: 0, count: count)
         self.temperatureMap = [Float](repeating: 0.5, count: count)
         self.humidityMap = [Float](repeating: 0.5, count: count)
+        self.steepnessMap = [Float](repeating: 0, count: count)
         self.waterData = WaterData(width: width, height: height)
         self.objectLayer = ObjectLayer(width: width, height: height)
         self.cityNetwork = CityNetworkData(width: width, height: height)
@@ -85,8 +87,10 @@ public struct MapData: Sendable {
     }
     
     public func steepness(at x: Int, y: Int) -> Float {
-        let grad = gradient(at: x, y: y)
-        return sqrt(grad.x * grad.x + grad.y * grad.y)
+        guard x >= 0 && x < width && y >= 0 && y < height else {
+            return 0
+        }
+        return steepnessMap[y * width + x]
     }
     
     public func sampleHeight(at position: SIMD2<Float>) -> Float {
@@ -112,6 +116,19 @@ public struct MapData: Sendable {
         return h0 * (1 - fy) + h1 * fy
     }
     
+    public mutating func computeSteepnessMap() {
+        for y in 0..<height {
+            for x in 0..<width {
+                let grad = gradient(at: x, y: y)
+                steepnessMap[y * width + x] = sqrt(grad.x * grad.x + grad.y * grad.y)
+            }
+        }
+        guard let maxSteepness = steepnessMap.max(), maxSteepness > 0 else { return }
+        for i in 0..<steepnessMap.count {
+            steepnessMap[i] /= maxSteepness
+        }
+    }
+
     public mutating func updateStatistics(generationTimeMs: Int) {
         metadata.generationTimeMs = generationTimeMs
         metadata.statistics.calculate(from: self)

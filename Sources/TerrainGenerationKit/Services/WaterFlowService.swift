@@ -46,7 +46,9 @@ public final class WaterFlowService: WaterFlowServiceProtocol, @unchecked Sendab
             height: height,
             seaLevel: seaLevel
         )
-        
+
+        normalizeWaterDepth(waterData: &waterData)
+
         return waterData
     }
     
@@ -85,6 +87,13 @@ public final class WaterFlowService: WaterFlowServiceProtocol, @unchecked Sendab
         waterData.riverMask = smoothed
     }
     
+    private func normalizeWaterDepth(waterData: inout WaterData) {
+        guard let maxDepth = waterData.waterDepth.max(), maxDepth > 0 else { return }
+        for i in 0..<waterData.waterDepth.count {
+            waterData.waterDepth[i] /= maxDepth
+        }
+    }
+
     private func addRiverDeltas(
         waterData: inout WaterData,
         heightmap: [Float],
