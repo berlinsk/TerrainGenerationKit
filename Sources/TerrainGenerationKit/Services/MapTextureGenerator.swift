@@ -1,20 +1,169 @@
 import CoreGraphics
 import Foundation
+import Metal
 import simd
 
 public final class MapTextureGenerator: MapTextureGeneratorProtocol {
 
-    public init() {}
+    private let device: MTLDevice?
+    private let commandQueue: MTLCommandQueue?
+    private let pipeline: MTLComputePipelineState?
+    private let supportsNonUniformThreadgroups: Bool
+
+    public init() {
+        guard let dev = MTLCreateSystemDefaultDevice(),
+              let queue = dev.makeCommandQueue(),
+              let library = try? dev.makeDefaultLibrary(bundle: Bundle.module),
+              let function = library.makeFunction(name: "generateMapTexture"),
+              let state = try? dev.makeComputePipelineState(function: function) else {
+            device = nil
+            commandQueue = nil
+            pipeline = nil
+            supportsNonUniformThreadgroups = false
+            return
+        }
+        device = dev
+        commandQueue = queue
+        pipeline = state
+        supportsNonUniformThreadgroups = dev.supportsFamily(.apple4)
+    }
 
     public func generateTexture(from mapData: MapData, mode: MapRenderMode) -> CGImage? {
-        if let result = generateTextureGPU(mapData: mapData, mode: mode) {
-            return result
+        if let image = generateTextureGPU(mapData: mapData, mode: mode) {
+            return image
         }
         return generateTextureCPU(mapData: mapData, mode: mode)
     }
 
+    private struct TextureParams {
+        var width: UInt32
+        var height: UInt32
+        var renderMode: UInt32
+        var seaLevel: Float
+    }
+
+    private func modeIndex(_ mode: MapRenderMode) -> UInt32 {
+        switch mode {
+        case .heightmap:
+            return 0
+        case .biome:
+            return 1
+        case .temperature:
+            return 2
+        case .humidity:
+            return 3
+        case .water:
+            return 4
+        case .waterDepth:
+            return 5
+        case .flowDirection:
+            return 6
+        case .cities:
+            return 7
+        case .steepness:
+            return 8
+        case .composite:
+            return 9
+        }
+    }
+
     private func generateTextureGPU(mapData: MapData, mode: MapRenderMode) -> CGImage? {
-        return nil
+        guard let device, let commandQueue, let pipeline else { return nil }
+
+        let width = mapData.width
+        let height = mapData.height
+        let count = width * height
+
+        func makeBuffer<T>(_ array: [T]) -> MTLBuffer? {
+            array.withUnsafeBytes { ptr in
+                device.makeBuffer(bytes: ptr.baseAddress!, length: ptr.count, options: .storageModeShared)
+            }
+        }
+
+        guard
+            let hBuf = makeBuffer(mapData.heightmap),
+            let biBuf = makeBuffer(mapData.biomeMap),
+            let tBuf = makeBuffer(mapData.temperatureMap),
+            let huBuf = makeBuffer(mapData.humidityMap),
+            let rvBuf = makeBuffer(mapData.waterData.riverMask),
+            let lvBuf = makeBuffer(mapData.waterData.lakeMask),
+            let wdBuf = makeBuffer(mapData.waterData.waterDepth),
+            let fxBuf = makeBuffer(mapData.waterData.flowDirectionX),
+            let fyBuf = makeBuffer(mapData.waterData.flowDirectionY),
+            let stBuf = makeBuffer(mapData.steepnessMap),
+            let cmBuf = makeBuffer(mapData.cityNetwork.cityMask),
+            let wmBuf = makeBuffer(mapData.cityNetwork.wallMask),
+            let rdBuf = makeBuffer(mapData.cityNetwork.roadSDF),
+            let outBuf = device.makeBuffer(length: count * 4, options: .storageModeShared)
+        else { return nil }
+
+        var params = TextureParams(
+            width: UInt32(width),
+            height: UInt32(height),
+            renderMode: modeIndex(mode),
+            seaLevel: mapData.metadata.settings.biome.seaLevel
+        )
+        guard let paramBuf = device.makeBuffer(bytes: &params, length: MemoryLayout<TextureParams>.stride, options: .storageModeShared) else { return nil }
+
+        guard let cmdBuf = commandQueue.makeCommandBuffer(),
+              let encoder = cmdBuf.makeComputeCommandEncoder() else { return nil }
+
+        encoder.setComputePipelineState(pipeline)
+        encoder.setBuffer(hBuf, offset: 0, index: 0)
+        encoder.setBuffer(biBuf, offset: 0, index: 1)
+        encoder.setBuffer(tBuf, offset: 0, index: 2)
+        encoder.setBuffer(huBuf, offset: 0, index: 3)
+        encoder.setBuffer(rvBuf, offset: 0, index: 4)
+        encoder.setBuffer(lvBuf, offset: 0, index: 5)
+        encoder.setBuffer(wdBuf, offset: 0, index: 6)
+        encoder.setBuffer(fxBuf, offset: 0, index: 7)
+        encoder.setBuffer(fyBuf, offset: 0, index: 8)
+        encoder.setBuffer(stBuf, offset: 0, index: 9)
+        encoder.setBuffer(cmBuf, offset: 0, index: 10)
+        encoder.setBuffer(wmBuf, offset: 0, index: 11)
+        encoder.setBuffer(rdBuf, offset: 0, index: 12)
+        encoder.setBuffer(paramBuf, offset: 0, index: 13)
+        encoder.setBuffer(outBuf, offset: 0, index: 14)
+
+        let w = max(1, min(16, pipeline.threadExecutionWidth))
+        let h = max(1, min(16, pipeline.maxTotalThreadsPerThreadgroup / w))
+        let threadsPerGroup = MTLSize(width: w, height: h, depth: 1)
+
+        #if targetEnvironment(simulator)
+        let useNonUniform = false
+        #else
+        let useNonUniform = supportsNonUniformThreadgroups
+        #endif
+
+        if useNonUniform {
+            encoder.dispatchThreads(MTLSize(width: width, height: height, depth: 1), threadsPerThreadgroup: threadsPerGroup)
+        } else {
+            let gw = (width  + threadsPerGroup.width  - 1) / threadsPerGroup.width
+            let gh = (height + threadsPerGroup.height - 1) / threadsPerGroup.height
+            encoder.dispatchThreadgroups(MTLSize(width: gw, height: gh, depth: 1), threadsPerThreadgroup: threadsPerGroup)
+        }
+
+        encoder.endEncoding()
+        cmdBuf.commit()
+        cmdBuf.waitUntilCompleted()
+
+        if cmdBuf.status == .error { return nil }
+
+        let rawPtr = outBuf.contents().bindMemory(to: UInt8.self, capacity: count * 4)
+        var pixels = [UInt8](repeating: 0, count: count * 4)
+        pixels.withUnsafeMutableBytes { dst in
+            dst.baseAddress!.copyMemory(from: rawPtr, byteCount: count * 4)
+        }
+
+        if mode == .biome || mode == .composite {
+            overlayObjects(pixels: &pixels, mapData: mapData, width: width, height: height)
+        }
+        if mode == .biome || mode == .composite || mode == .cities {
+            overlayRoads(pixels: &pixels, mapData: mapData, width: width, height: height)
+            overlayCities(pixels: &pixels, mapData: mapData, width: width, height: height)
+        }
+
+        return createCGImage(from: pixels, width: width, height: height)
     }
 
     private func generateTextureCPU(mapData: MapData, mode: MapRenderMode) -> CGImage? {
@@ -37,7 +186,6 @@ public final class MapTextureGenerator: MapTextureGeneratorProtocol {
         if mode == .biome || mode == .composite {
             overlayObjects(pixels: &pixels, mapData: mapData, width: width, height: height)
         }
-
         if mode == .biome || mode == .composite || mode == .cities {
             overlayRoads(pixels: &pixels, mapData: mapData, width: width, height: height)
             overlayCities(pixels: &pixels, mapData: mapData, width: width, height: height)
