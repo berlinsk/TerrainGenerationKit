@@ -11,4 +11,8 @@ public enum TerrainGenerationKit {
     public static func createTextureGenerator() -> any MapTextureGeneratorProtocol {
         return MapTextureGenerator()
     }
+
+    public static func createMeshGenerator() -> any TerrainMeshGeneratorProtocol {
+        return TerrainMeshGenerator()
+    }
 }
