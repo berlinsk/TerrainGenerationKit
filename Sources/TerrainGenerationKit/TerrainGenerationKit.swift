@@ -7,4 +7,8 @@ public enum TerrainGenerationKit {
     public static func createGenerator() -> MapGenerator {
         return MapGenerator()
     }
+
+    public static func createTextureGenerator() -> any MapTextureGeneratorProtocol {
+        return MapTextureGenerator()
+    }
 }
