@@ -34,35 +34,34 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
     ) async -> [Float] {
         let noiseSeed = NoiseSeed(seed)
         
-        let primaryNoise = await noiseService.generateNoise(
-            width: width,
-            height: height,
-            parameters: settings.primaryNoise,
-            seed: noiseSeed.derive(0)
-        )
-        
-        var layers: [[Float]] = [primaryNoise]
+        var noiseResults = [Int: [Float]](minimumCapacity: 3)
+        await withTaskGroup(of: (Int, [Float]).self) { group in
+            group.addTask { [noiseService] in
+                (0, await noiseService.generateNoise(width: width, height: height, parameters: settings.primaryNoise, seed: noiseSeed.derive(0)))
+            }
+            if let params = settings.secondaryNoise {
+                group.addTask { [noiseService] in
+                    (1, await noiseService.generateNoise(width: width, height: height, parameters: params, seed: noiseSeed.derive(1)))
+                }
+            }
+            if let params = settings.detailNoise {
+                group.addTask { [noiseService] in
+                    (2, await noiseService.generateNoise(width: width, height: height, parameters: params, seed: noiseSeed.derive(2)))
+                }
+            }
+            for await (idx, noise) in group {
+                noiseResults[idx] = noise
+            }
+        }
+
+        var layers: [[Float]] = [noiseResults[0]!]
         var weights: [Float] = [settings.primaryWeight]
-        
-        if let secondaryParams = settings.secondaryNoise {
-            let secondaryNoise = await noiseService.generateNoise(
-                width: width,
-                height: height,
-                parameters: secondaryParams,
-                seed: noiseSeed.derive(1)
-            )
-            layers.append(secondaryNoise)
+        if settings.secondaryNoise != nil, let noise = noiseResults[1] {
+            layers.append(noise)
             weights.append(settings.secondaryWeight)
         }
-        
-        if let detailParams = settings.detailNoise {
-            let detailNoise = await noiseService.generateNoise(
-                width: width,
-                height: height,
-                parameters: detailParams,
-                seed: noiseSeed.derive(2)
-            )
-            layers.append(detailNoise)
+        if settings.detailNoise != nil, let noise = noiseResults[2] {
+            layers.append(noise)
             weights.append(settings.detailWeight)
         }
         
