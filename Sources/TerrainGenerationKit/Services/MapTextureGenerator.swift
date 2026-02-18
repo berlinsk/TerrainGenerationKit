@@ -287,7 +287,7 @@ public final class MapTextureGenerator: MapTextureGeneratorProtocol {
             }
 
         case .steepness:
-            let s = mapData.steepnessMap[idx]
+            let s = pow(mapData.steepnessMap[idx], 0.4)
             let r = UInt8(clamping: Int(s * 255))
             let g = UInt8(clamping: Int(s * 128))
             return (r, g, 0)
