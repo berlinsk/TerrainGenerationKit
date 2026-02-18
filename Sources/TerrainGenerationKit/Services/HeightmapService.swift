@@ -215,30 +215,26 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
     ) {
         for _ in 0..<passes {
             var smoothed = heightmap
-            
-            for y in 1..<(height - 1) {
-                for x in 1..<(width - 1) {
-                    let idx = y * width + x
-                    
-                    var sum: Float = heightmap[idx]
-                    var count: Float = 1
-                    
-                    for dy in -1...1 {
-                        for dx in -1...1 {
-                            if dx == 0 && dy == 0 {
-                                continue
+            heightmap.withUnsafeBufferPointer { src in
+                smoothed.withUnsafeMutableBufferPointer { dst in
+                    DispatchQueue.concurrentPerform(iterations: height - 2) { row in
+                        let y = row + 1
+                        for x in 1..<(width - 1) {
+                            let idx = y * width + x
+                            var sum: Float = src[idx]
+                            var count: Float = 1
+                            for dy in -1...1 {
+                                for dx in -1...1 {
+                                    if dx == 0 && dy == 0 { continue }
+                                    sum += src[(y + dy) * width + (x + dx)]
+                                    count += 1
+                                }
                             }
-                            let nidx = (y + dy) * width + (x + dx)
-                            sum += heightmap[nidx]
-                            count += 1
+                            dst[idx] = MathUtils.lerp(src[idx], sum / count, strength)
                         }
                     }
-                    
-                    let avg = sum / count
-                    smoothed[idx] = MathUtils.lerp(heightmap[idx], avg, strength)
                 }
             }
-            
             heightmap = smoothed
         }
     }
