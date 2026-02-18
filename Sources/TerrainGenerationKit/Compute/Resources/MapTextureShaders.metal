@@ -152,7 +152,7 @@ kernel void generateMapTexture(
             break;
         }
         case 8: {
-            float s = steepnessMap[idx];
+            float s = pow(steepnessMap[idx], 0.4);
             color = float3(s, s * 0.5, 0.0);
             break;
         }
