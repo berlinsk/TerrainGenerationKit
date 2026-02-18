@@ -247,13 +247,11 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         guard steps > 0 else {
             return
         }
-        
-        for i in 0..<heightmap.count {
-            heightmap[i] = MathUtils.smoothTerrace(
-                heightmap[i],
-                steps: steps,
-                sharpness: sharpness
-            )
+
+        heightmap.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: buf.count) { i in
+                buf[i] = MathUtils.smoothTerrace(buf[i], steps: steps, sharpness: sharpness)
+            }
         }
     }
     
