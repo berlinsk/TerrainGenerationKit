@@ -152,12 +152,15 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
             height: height,
             type: .radial(falloff: 1.5)
         )
-        
-        for i in 0..<heightmap.count {
-            heightmap[i] = heightmap[i] * 0.7 + mask[i] * 0.3
+        heightmap.withUnsafeMutableBufferPointer { buf in
+            mask.withUnsafeBufferPointer { msk in
+                DispatchQueue.concurrentPerform(iterations: buf.count) { i in
+                    buf[i] = buf[i] * 0.7 + msk[i] * 0.3
+                }
+            }
         }
     }
-    
+
     private func applyArchipelagoMask(
         heightmap: inout [Float],
         width: Int,
@@ -168,12 +171,15 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
             height: height,
             type: .island(coastWidth: Float(min(width, height)) * 0.15)
         )
-        
-        for i in 0..<heightmap.count {
-            heightmap[i] = heightmap[i] * mask[i]
+        heightmap.withUnsafeMutableBufferPointer { buf in
+            mask.withUnsafeBufferPointer { msk in
+                DispatchQueue.concurrentPerform(iterations: buf.count) { i in
+                    buf[i] = buf[i] * msk[i]
+                }
+            }
         }
     }
-    
+
     private func applyPangaeaMask(
         heightmap: inout [Float],
         width: Int,
@@ -183,25 +189,24 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         let centerX = Float(width) / 2
         let centerY = Float(height) / 2
         let maxDist = min(centerX, centerY) * 0.8
-        
-        for y in 0..<height {
-            for x in 0..<width {
-                let idx = y * width + x
-                let dx = Float(x) - centerX
-                let dy = Float(y) - centerY
-                let dist = sqrt(dx * dx + dy * dy)
-                
-                let landMask: Float
-                if dist < maxDist * 0.6 {
-                    landMask = 1.0
-                } else if dist < maxDist {
-                    let t = (dist - maxDist * 0.6) / (maxDist * 0.4)
-                    landMask = 1 - MathUtils.smootherstep(0, 1, t)
-                } else {
-                    landMask = 0
+        heightmap.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: height) { y in
+                for x in 0..<width {
+                    let idx = y * width + x
+                    let dx = Float(x) - centerX
+                    let dy = Float(y) - centerY
+                    let dist = sqrt(dx * dx + dy * dy)
+                    let landMask: Float
+                    if dist < maxDist * 0.6 {
+                        landMask = 1.0
+                    } else if dist < maxDist {
+                        let t = (dist - maxDist * 0.6) / (maxDist * 0.4)
+                        landMask = 1 - MathUtils.smootherstep(0, 1, t)
+                    } else {
+                        landMask = 0
+                    }
+                    buf[idx] = buf[idx] * 0.5 + landMask * 0.5
                 }
-                
-                heightmap[idx] = heightmap[idx] * 0.5 + landMask * 0.5
             }
         }
     }
