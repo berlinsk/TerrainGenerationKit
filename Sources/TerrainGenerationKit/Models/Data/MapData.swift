@@ -134,7 +134,9 @@ public struct MapData: Sendable {
                 }
             }
         }
-        guard let maxSteepness = steepnessMap.max(), maxSteepness > 0 else { return }
+        guard let maxSteepness = steepnessMap.max(), maxSteepness > 0 else {
+            return
+        }
         let maxS = maxSteepness
         steepnessMap.withUnsafeMutableBufferPointer { buf in
             DispatchQueue.concurrentPerform(iterations: buf.count) { i in

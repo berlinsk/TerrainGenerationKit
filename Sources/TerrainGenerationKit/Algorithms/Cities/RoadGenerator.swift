@@ -215,11 +215,15 @@ public final class RoadGenerator: @unchecked Sendable {
         let gateSet: Set<SIMD2<Int>> = cities.reduce(into: []) { $0.formUnion($1.gateTiles) }
         for city in cities {
             for tile in city.allOccupiedTiles() {
-                guard tile.x >= 0 && tile.x < width && tile.y >= 0 && tile.y < height else { continue }
+                guard tile.x >= 0 && tile.x < width && tile.y >= 0 && tile.y < height else {
+                    continue
+                }
                 blockIndices.insert(tile.y * width + tile.x)
             }
             for tile in city.wallTiles where !gateSet.contains(tile) {
-                guard tile.x >= 0 && tile.x < width && tile.y >= 0 && tile.y < height else { continue }
+                guard tile.x >= 0 && tile.x < width && tile.y >= 0 && tile.y < height else {
+                    continue
+                }
                 blockIndices.insert(tile.y * width + tile.x)
             }
         }

@@ -234,70 +234,72 @@ extension MathUtils {
         guard !array.isEmpty else {
             return
         }
-        
         var minVal = Float.greatestFiniteMagnitude
         var maxVal = -Float.greatestFiniteMagnitude
-        
         for value in array {
             minVal = min(minVal, value)
             maxVal = max(maxVal, value)
         }
-        
         let range = maxVal - minVal
         guard range > 0 else {
             return
         }
-        
-        for i in 0..<array.count {
-            array[i] = (array[i] - minVal) / range
+        array.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: buf.count) { i in
+                buf[i] = (buf[i] - minVal) / range
+            }
         }
     }
-    
+
     public static func applyContrast(_ array: inout [Float], strength: Float) {
-        for i in 0..<array.count {
-            let centered = array[i] - 0.5
-            array[i] = clamp(centered * strength + 0.5, 0, 1)
+        array.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: buf.count) { i in
+                buf[i] = clamp((buf[i] - 0.5) * strength + 0.5, 0, 1)
+            }
         }
     }
-    
+
     public static func gaussianBlur(_ array: inout [Float], width: Int, height: Int, radius: Int = 1) {
         guard radius > 0 else {
             return
         }
-        
         var temp = [Float](repeating: 0, count: array.count)
-        
-        for y in 0..<height {
-            for x in 0..<width {
-                var sum: Float = 0
-                var count: Float = 0
-                
-                for dx in -radius...radius {
-                    let nx = x + dx
-                    if nx >= 0 && nx < width {
-                        let weight = 1 - Float(abs(dx)) / Float(radius + 1)
-                        sum += array[y * width + nx] * weight
-                        count += weight
+        array.withUnsafeBufferPointer { src in
+            temp.withUnsafeMutableBufferPointer { dst in
+                DispatchQueue.concurrentPerform(iterations: height) { y in
+                    for x in 0..<width {
+                        var sum: Float = 0
+                        var count: Float = 0
+                        for dx in -radius...radius {
+                            let nx = x + dx
+                            if nx >= 0 && nx < width {
+                                let weight = 1 - Float(abs(dx)) / Float(radius + 1)
+                                sum += src[y * width + nx] * weight
+                                count += weight
+                            }
+                        }
+                        dst[y * width + x] = sum / count
                     }
                 }
-                temp[y * width + x] = sum / count
             }
         }
-        
-        for y in 0..<height {
-            for x in 0..<width {
-                var sum: Float = 0
-                var count: Float = 0
-                
-                for dy in -radius...radius {
-                    let ny = y + dy
-                    if ny >= 0 && ny < height {
-                        let weight = 1 - Float(abs(dy)) / Float(radius + 1)
-                        sum += temp[ny * width + x] * weight
-                        count += weight
+        temp.withUnsafeBufferPointer { src in
+            array.withUnsafeMutableBufferPointer { dst in
+                DispatchQueue.concurrentPerform(iterations: height) { y in
+                    for x in 0..<width {
+                        var sum: Float = 0
+                        var count: Float = 0
+                        for dy in -radius...radius {
+                            let ny = y + dy
+                            if ny >= 0 && ny < height {
+                                let weight = 1 - Float(abs(dy)) / Float(radius + 1)
+                                sum += src[ny * width + x] * weight
+                                count += weight
+                            }
+                        }
+                        dst[y * width + x] = sum / count
                     }
                 }
-                array[y * width + x] = sum / count
             }
         }
     }
