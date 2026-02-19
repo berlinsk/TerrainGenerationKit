@@ -280,42 +280,35 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
         params: BiomeParameters
     ) {
         var smoothed = biomeMap
-        
-        for y in 1..<(height - 1) {
-            for x in 1..<(width - 1) {
-                let idx = y * width + x
-                let currentBiome = BiomeType(rawValue: Int(biomeMap[idx])) ?? .ocean
-                
-                if currentBiome.isWater {
-                    continue
-                }
-                
-                var biomeCounts: [Int: Int] = [:]
-                biomeCounts[Int(biomeMap[idx])] = 2
-                
-                for dy in -1...1 {
-                    for dx in -1...1 {
-                        if dx == 0 && dy == 0 {
-                            continue
+        biomeMap.withUnsafeBufferPointer { src in
+            smoothed.withUnsafeMutableBufferPointer { dst in
+                DispatchQueue.concurrentPerform(iterations: height - 2) { row in
+                    let y = row + 1
+                    for x in 1..<(width - 1) {
+                        let idx = y * width + x
+                        let currentBiome = BiomeType(rawValue: Int(src[idx])) ?? .ocean
+                        if currentBiome.isWater { continue }
+                        var biomeCounts: [Int: Int] = [:]
+                        biomeCounts[Int(src[idx])] = 2
+                        for dy in -1...1 {
+                            for dx in -1...1 {
+                                if dx == 0 && dy == 0 { continue }
+                                let nidx = (y + dy) * width + (x + dx)
+                                let neighborBiome = Int(src[nidx])
+                                if let biome = BiomeType(rawValue: neighborBiome), !biome.isWater {
+                                    biomeCounts[neighborBiome, default: 0] += 1
+                                }
+                            }
                         }
-                        
-                        let nidx = (y + dy) * width + (x + dx)
-                        let neighborBiome = Int(biomeMap[nidx])
-                        
-                        if let biome = BiomeType(rawValue: neighborBiome), !biome.isWater {
-                            biomeCounts[neighborBiome, default: 0] += 1
+                        if let mostCommon = biomeCounts.max(by: { $0.value < $1.value }) {
+                            if mostCommon.value >= 5 && mostCommon.key != Int(src[idx]) {
+                                dst[idx] = UInt8(mostCommon.key)
+                            }
                         }
-                    }
-                }
-                
-                if let mostCommon = biomeCounts.max(by: { $0.value < $1.value }) {
-                    if mostCommon.value >= 5 && mostCommon.key != Int(biomeMap[idx]) {
-                        smoothed[idx] = UInt8(mostCommon.key)
                     }
                 }
             }
         }
-        
         biomeMap = smoothed
     }
 }
