@@ -81,27 +81,24 @@ public final class PostProcessingService: PostProcessingServiceProtocol, @unchec
         contrast: Float = 1.0,
         saturation: Float = 1.0
     ) {
-        for i in 0..<colors.count {
-            var color = colors[i]
-            
-            color.x *= brightness
-            color.y *= brightness
-            color.z *= brightness
-            
-            color.x = (color.x - 0.5) * contrast + 0.5
-            color.y = (color.y - 0.5) * contrast + 0.5
-            color.z = (color.z - 0.5) * contrast + 0.5
-            
-            let gray = color.x * 0.299 + color.y * 0.587 + color.z * 0.114
-            color.x = MathUtils.lerp(gray, color.x, saturation)
-            color.y = MathUtils.lerp(gray, color.y, saturation)
-            color.z = MathUtils.lerp(gray, color.z, saturation)
-            
-            color.x = MathUtils.clamp(color.x, 0, 1)
-            color.y = MathUtils.clamp(color.y, 0, 1)
-            color.z = MathUtils.clamp(color.z, 0, 1)
-            
-            colors[i] = color
+        colors.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: buf.count) { i in
+                var color = buf[i]
+                color.x *= brightness
+                color.y *= brightness
+                color.z *= brightness
+                color.x = (color.x - 0.5) * contrast + 0.5
+                color.y = (color.y - 0.5) * contrast + 0.5
+                color.z = (color.z - 0.5) * contrast + 0.5
+                let gray = color.x * 0.299 + color.y * 0.587 + color.z * 0.114
+                color.x = MathUtils.lerp(gray, color.x, saturation)
+                color.y = MathUtils.lerp(gray, color.y, saturation)
+                color.z = MathUtils.lerp(gray, color.z, saturation)
+                color.x = MathUtils.clamp(color.x, 0, 1)
+                color.y = MathUtils.clamp(color.y, 0, 1)
+                color.z = MathUtils.clamp(color.z, 0, 1)
+                buf[i] = color
+            }
         }
     }
     
