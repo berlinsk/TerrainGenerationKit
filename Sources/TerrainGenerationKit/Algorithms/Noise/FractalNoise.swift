@@ -54,22 +54,24 @@ public final class FractalNoise: @unchecked Sendable {
             type = .billow
         }
         
-        DispatchQueue.concurrentPerform(iterations: height) { y in
-            for x in 0..<width {
-                let value = fbm(
-                    x: Float(x),
-                    y: Float(y),
-                    type: type,
-                    octaves: parameters.octaves,
-                    frequency: parameters.frequency,
-                    persistence: parameters.persistence,
-                    lacunarity: parameters.lacunarity,
-                    amplitude: parameters.amplitude
-                )
-                result[y * width + x] = value
+        result.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: height) { y in
+                for x in 0..<width {
+                    let value = fbm(
+                        x: Float(x),
+                        y: Float(y),
+                        type: type,
+                        octaves: parameters.octaves,
+                        frequency: parameters.frequency,
+                        persistence: parameters.persistence,
+                        lacunarity: parameters.lacunarity,
+                        amplitude: parameters.amplitude
+                    )
+                    buf[y * width + x] = value
+                }
             }
         }
-        
+
         MathUtils.normalizeArray(&result)
         return result
     }

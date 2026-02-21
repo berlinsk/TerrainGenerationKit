@@ -81,27 +81,30 @@ public final class PostProcessingService: PostProcessingServiceProtocol, @unchec
         contrast: Float = 1.0,
         saturation: Float = 1.0
     ) {
-        for i in 0..<colors.count {
-            var color = colors[i]
-            
-            color.x *= brightness
-            color.y *= brightness
-            color.z *= brightness
-            
-            color.x = (color.x - 0.5) * contrast + 0.5
-            color.y = (color.y - 0.5) * contrast + 0.5
-            color.z = (color.z - 0.5) * contrast + 0.5
-            
-            let gray = color.x * 0.299 + color.y * 0.587 + color.z * 0.114
-            color.x = MathUtils.lerp(gray, color.x, saturation)
-            color.y = MathUtils.lerp(gray, color.y, saturation)
-            color.z = MathUtils.lerp(gray, color.z, saturation)
-            
-            color.x = MathUtils.clamp(color.x, 0, 1)
-            color.y = MathUtils.clamp(color.y, 0, 1)
-            color.z = MathUtils.clamp(color.z, 0, 1)
-            
-            colors[i] = color
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        colors.withUnsafeMutableBufferPointer { buf in
+            let n = buf.count
+            DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                let start = chunk * n / nc
+                let end = min((chunk + 1) * n / nc, n)
+                for i in start..<end {
+                    var color = buf[i]
+                    color.x *= brightness
+                    color.y *= brightness
+                    color.z *= brightness
+                    color.x = (color.x - 0.5) * contrast + 0.5
+                    color.y = (color.y - 0.5) * contrast + 0.5
+                    color.z = (color.z - 0.5) * contrast + 0.5
+                    let gray = color.x * 0.299 + color.y * 0.587 + color.z * 0.114
+                    color.x = MathUtils.lerp(gray, color.x, saturation)
+                    color.y = MathUtils.lerp(gray, color.y, saturation)
+                    color.z = MathUtils.lerp(gray, color.z, saturation)
+                    color.x = MathUtils.clamp(color.x, 0, 1)
+                    color.y = MathUtils.clamp(color.y, 0, 1)
+                    color.z = MathUtils.clamp(color.z, 0, 1)
+                    buf[i] = color
+                }
+            }
         }
     }
     
@@ -112,26 +115,26 @@ public final class PostProcessingService: PostProcessingServiceProtocol, @unchec
         strength: Float = 1.0
     ) -> [SIMD3<Float>] {
         var normals = [SIMD3<Float>](repeating: SIMD3(0, 0, 1), count: width * height)
-        
-        DispatchQueue.concurrentPerform(iterations: height) { y in
-            for x in 0..<width {
-                let idx = y * width + x
-                
-                let left = x > 0 ? heightmap[idx - 1] : heightmap[idx]
-                let right = x < width - 1 ? heightmap[idx + 1] : heightmap[idx]
-                let up = y > 0 ? heightmap[idx - width] : heightmap[idx]
-                let down = y < height - 1 ? heightmap[idx + width] : heightmap[idx]
-                
-                let dx = (right - left) * strength
-                let dy = (down - up) * strength
-                
-                var normal = SIMD3<Float>(-dx, -dy, 1)
-                normal = normalize(normal)
-                
-                normals[idx] = normal
+
+        normals.withUnsafeMutableBufferPointer { buf in
+            heightmap.withUnsafeBufferPointer { hm in
+                DispatchQueue.concurrentPerform(iterations: height) { y in
+                    for x in 0..<width {
+                        let idx = y * width + x
+                        let left = x > 0 ? hm[idx - 1] : hm[idx]
+                        let right = x < width - 1 ? hm[idx + 1] : hm[idx]
+                        let up = y > 0 ? hm[idx - width] : hm[idx]
+                        let down = y < height - 1 ? hm[idx + width] : hm[idx]
+                        let dx = (right - left) * strength
+                        let dy = (down - up) * strength
+                        var normal = SIMD3<Float>(-dx, -dy, 1)
+                        normal = normalize(normal)
+                        buf[idx] = normal
+                    }
+                }
             }
         }
-        
+
         return normals
     }
     
@@ -143,46 +146,43 @@ public final class PostProcessingService: PostProcessingServiceProtocol, @unchec
         intensity: Float = 1.0
     ) -> [Float] {
         var ao = [Float](repeating: 1, count: width * height)
-        
-        DispatchQueue.concurrentPerform(iterations: height) { y in
-            for x in 0..<width {
-                let idx = y * width + x
-                let h = heightmap[idx]
-                
-                var occlusion: Float = 0
-                var samples: Float = 0
-                
-                for dy in -radius...radius {
-                    for dx in -radius...radius {
-                        if dx == 0 && dy == 0 {
-                            continue
-                        }
-                        
-                        let nx = x + dx
-                        let ny = y + dy
-                        
-                        if nx >= 0 && nx < width && ny >= 0 && ny < height {
-                            let nidx = ny * width + nx
-                            let nh = heightmap[nidx]
-                            
-                            if nh > h {
-                                let dist = sqrt(Float(dx * dx + dy * dy))
-                                let heightDiff = nh - h
-                                occlusion += heightDiff / dist
+
+        ao.withUnsafeMutableBufferPointer { buf in
+            heightmap.withUnsafeBufferPointer { hm in
+                DispatchQueue.concurrentPerform(iterations: height) { y in
+                    for x in 0..<width {
+                        let idx = y * width + x
+                        let h = hm[idx]
+                        var occlusion: Float = 0
+                        var samples: Float = 0
+                        for dy in -radius...radius {
+                            for dx in -radius...radius {
+                                if dx == 0 && dy == 0 {
+                                    continue
+                                }
+                                let nx = x + dx
+                                let ny = y + dy
+                                if nx >= 0 && nx < width && ny >= 0 && ny < height {
+                                    let nidx = ny * width + nx
+                                    let nh = hm[nidx]
+                                    if nh > h {
+                                        let dist = sqrt(Float(dx * dx + dy * dy))
+                                        let heightDiff = nh - h
+                                        occlusion += heightDiff / dist
+                                    }
+                                    samples += 1
+                                }
                             }
-                            
-                            samples += 1
+                        }
+                        if samples > 0 {
+                            let normalizedOcclusion = min(occlusion / samples * intensity, 1)
+                            buf[idx] = 1 - normalizedOcclusion
                         }
                     }
                 }
-                
-                if samples > 0 {
-                    let normalizedOcclusion = min(occlusion / samples * intensity, 1)
-                    ao[idx] = 1 - normalizedOcclusion
-                }
             }
         }
-        
+
         return ao
     }
 }
