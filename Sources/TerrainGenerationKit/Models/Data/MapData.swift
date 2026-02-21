@@ -117,20 +117,21 @@ public struct MapData: Sendable {
     }
     
     public mutating func computeSteepnessMap() {
-        let hm = heightmap
         let w = width
         let h = height
-        steepnessMap.withUnsafeMutableBufferPointer { buf in
-            DispatchQueue.concurrentPerform(iterations: h) { y in
-                for x in 0..<w {
-                    let idx = y * w + x
-                    let left: Float = x > 0 ? hm[idx - 1] : 0
-                    let right: Float = x < w - 1 ? hm[idx + 1] : 0
-                    let up: Float = y > 0 ? hm[(y - 1) * w + x] : 0
-                    let down: Float = y < h - 1 ? hm[(y + 1) * w + x] : 0
-                    let gx = (right - left) * 0.5
-                    let gy = (down - up) * 0.5
-                    buf[idx] = sqrt(gx * gx + gy * gy)
+        heightmap.withUnsafeBufferPointer { hm in
+            steepnessMap.withUnsafeMutableBufferPointer { buf in
+                DispatchQueue.concurrentPerform(iterations: h) { y in
+                    for x in 0..<w {
+                        let idx = y * w + x
+                        let left: Float = x > 0 ? hm[idx - 1] : 0
+                        let right: Float = x < w - 1 ? hm[idx + 1] : 0
+                        let up: Float = y > 0 ? hm[(y - 1) * w + x] : 0
+                        let down: Float = y < h - 1 ? hm[(y + 1) * w + x] : 0
+                        let gx = (right - left) * 0.5
+                        let gy = (down - up) * 0.5
+                        buf[idx] = sqrt(gx * gx + gy * gy)
+                    }
                 }
             }
         }
@@ -138,9 +139,15 @@ public struct MapData: Sendable {
             return
         }
         let maxS = maxSteepness
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
         steepnessMap.withUnsafeMutableBufferPointer { buf in
-            DispatchQueue.concurrentPerform(iterations: buf.count) { i in
-                buf[i] /= maxS
+            let n = buf.count
+            DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                let start = chunk * n / nc
+                let end = min((chunk + 1) * n / nc, n)
+                for i in start..<end {
+                    buf[i] /= maxS
+                }
             }
         }
     }

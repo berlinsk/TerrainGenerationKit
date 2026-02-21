@@ -24,35 +24,35 @@ public struct MapStatistics: Codable, Sendable {
         var minH: Float = Float.greatestFiniteMagnitude
         var maxH: Float = -Float.greatestFiniteMagnitude
         var biomeCounts: [Int: Int] = [:]
-        
+
         for y in 0..<mapData.height {
             for x in 0..<mapData.width {
                 let idx = y * mapData.width + x
                 let h = mapData.heightmap[idx]
                 let biome = mapData.biomeMap[idx]
-                
+
                 heightSum += h
                 minH = min(minH, h)
                 maxH = max(maxH, h)
-                
+
                 if !BiomeType(rawValue: Int(biome))!.isWater {
                     landCount += 1
                 }
-                
+
                 biomeCounts[Int(biome), default: 0] += 1
             }
         }
-        
+
         self.landPercentage = landCount / totalPixels
         self.waterPercentage = 1.0 - landPercentage
         self.averageHeight = heightSum / totalPixels
         self.minHeight = minH
         self.maxHeight = maxH
-        
+
         for (biome, count) in biomeCounts {
             self.biomeDistribution[biome] = Float(count) / totalPixels
         }
-        
+
         self.objectCount = mapData.objectLayer.objectCount
         self.cityCount = mapData.cityNetwork.cities.count
         self.roadCount = mapData.cityNetwork.roads.count

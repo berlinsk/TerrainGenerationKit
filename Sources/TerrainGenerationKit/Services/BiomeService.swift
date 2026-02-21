@@ -50,24 +50,35 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
     ) -> [UInt8] {
         let classifier = BiomeClassifier(parameters: params)
         var biomeMap = [UInt8](repeating: 0, count: width * height)
-        
-        DispatchQueue.concurrentPerform(iterations: height) { y in
-            for x in 0..<width {
-                let idx = y * width + x
-                
-                var biome = classifier.classify(
-                    height: heightmap[idx],
-                    temperature: temperatureMap[idx],
-                    humidity: humidityMap[idx],
-                    isRiver: waterData.isRiver(at: x, y: y),
-                    isLake: waterData.isLake(at: x, y: y)
-                )
-                
-                if !selection.isEnabled(biome) {
-                    biome = findAlternativeBiome(for: biome, selection: selection)
+
+        biomeMap.withUnsafeMutableBufferPointer { buf in
+            heightmap.withUnsafeBufferPointer { hm in
+                temperatureMap.withUnsafeBufferPointer { tm in
+                    humidityMap.withUnsafeBufferPointer { hum in
+                        waterData.riverMask.withUnsafeBufferPointer { riverMask in
+                            waterData.lakeMask.withUnsafeBufferPointer { lakeMask in
+                                DispatchQueue.concurrentPerform(iterations: height) { y in
+                                    for x in 0..<width {
+                                        let idx = y * width + x
+                                        let isRiver = idx < riverMask.count && riverMask[idx] > 0.5
+                                        let isLake = idx < lakeMask.count && lakeMask[idx] > 0.5
+                                        var biome = classifier.classify(
+                                            height: hm[idx],
+                                            temperature: tm[idx],
+                                            humidity: hum[idx],
+                                            isRiver: isRiver,
+                                            isLake: isLake
+                                        )
+                                        if !selection.isEnabled(biome) {
+                                            biome = findAlternativeBiome(for: biome, selection: selection)
+                                        }
+                                        buf[idx] = UInt8(biome.rawValue)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                
-                biomeMap[idx] = UInt8(biome.rawValue)
             }
         }
         
@@ -146,26 +157,26 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
         noiseService.normalizeNoise(&temperatureNoise)
         
         var temperatureMap = [Float](repeating: 0, count: width * height)
-        
-        DispatchQueue.concurrentPerform(iterations: height) { y in
-            for x in 0..<width {
-                let idx = y * width + x
-                
-                let latitudeNormalized = Float(y) / Float(height - 1)
-                let latitudeTemp = MathUtils.temperatureFromLatitude(
-                    latitudeNormalized,
-                    height: heightmap[idx]
-                )
-                
-                let noiseInfluence = (temperatureNoise[idx] - 0.5) * params.temperatureVariation
-                
-                temperatureMap[idx] = MathUtils.clamp(
-                    latitudeTemp + noiseInfluence,
-                    0, 1
-                )
+
+        temperatureMap.withUnsafeMutableBufferPointer { buf in
+            heightmap.withUnsafeBufferPointer { hm in
+                temperatureNoise.withUnsafeBufferPointer { noise in
+                    DispatchQueue.concurrentPerform(iterations: height) { y in
+                        for x in 0..<width {
+                            let idx = y * width + x
+                            let latitudeNormalized = Float(y) / Float(height - 1)
+                            let latitudeTemp = MathUtils.temperatureFromLatitude(
+                                latitudeNormalized,
+                                height: hm[idx]
+                            )
+                            let noiseInfluence = (noise[idx] - 0.5) * params.temperatureVariation
+                            buf[idx] = MathUtils.clamp(latitudeTemp + noiseInfluence, 0, 1)
+                        }
+                    }
+                }
             }
         }
-        
+
         return temperatureMap
     }
     
@@ -195,32 +206,35 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
         noiseService.normalizeNoise(&humidityNoise)
         
         var humidityMap = [Float](repeating: 0, count: width * height)
-        
+
         let waterDistance = calculateWaterDistance(
             heightmap: heightmap,
             width: width,
             height: height,
             seaLevel: params.seaLevel
         )
-        
-        DispatchQueue.concurrentPerform(iterations: height) { y in
-            for x in 0..<width {
-                let idx = y * width + x
-                
-                var humidity = humidityNoise[idx]
-                
-                let distInfluence = max(0, 1 - waterDistance[idx] / 50)
-                humidity = humidity * 0.6 + distInfluence * 0.4
-                
-                let heightPenalty = max(0, (heightmap[idx] - 0.6) * 0.5)
-                humidity -= heightPenalty
-                
-                humidity = 0.5 + (humidity - 0.5) * params.humidityVariation
-                
-                humidityMap[idx] = MathUtils.clamp(humidity, 0, 1)
+
+        humidityMap.withUnsafeMutableBufferPointer { buf in
+            heightmap.withUnsafeBufferPointer { hm in
+                humidityNoise.withUnsafeBufferPointer { noise in
+                    waterDistance.withUnsafeBufferPointer { wd in
+                        DispatchQueue.concurrentPerform(iterations: height) { y in
+                            for x in 0..<width {
+                                let idx = y * width + x
+                                var humidity = noise[idx]
+                                let distInfluence = max(0, 1 - wd[idx] / 50)
+                                humidity = humidity * 0.6 + distInfluence * 0.4
+                                let heightPenalty = max(0, (hm[idx] - 0.6) * 0.5)
+                                humidity -= heightPenalty
+                                humidity = 0.5 + (humidity - 0.5) * params.humidityVariation
+                                buf[idx] = MathUtils.clamp(humidity, 0, 1)
+                            }
+                        }
+                    }
+                }
             }
         }
-        
+
         return humidityMap
     }
     

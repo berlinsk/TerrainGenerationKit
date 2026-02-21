@@ -152,10 +152,16 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
             height: height,
             type: .radial(falloff: 1.5)
         )
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
         heightmap.withUnsafeMutableBufferPointer { buf in
             mask.withUnsafeBufferPointer { msk in
-                DispatchQueue.concurrentPerform(iterations: buf.count) { i in
-                    buf[i] = buf[i] * 0.7 + msk[i] * 0.3
+                let n = buf.count
+                DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                    let start = chunk * n / nc
+                    let end = min((chunk + 1) * n / nc, n)
+                    for i in start..<end {
+                        buf[i] = buf[i] * 0.7 + msk[i] * 0.3
+                    }
                 }
             }
         }
@@ -171,10 +177,16 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
             height: height,
             type: .island(coastWidth: Float(min(width, height)) * 0.15)
         )
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
         heightmap.withUnsafeMutableBufferPointer { buf in
             mask.withUnsafeBufferPointer { msk in
-                DispatchQueue.concurrentPerform(iterations: buf.count) { i in
-                    buf[i] = buf[i] * msk[i]
+                let n = buf.count
+                DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                    let start = chunk * n / nc
+                    let end = min((chunk + 1) * n / nc, n)
+                    for i in start..<end {
+                        buf[i] = buf[i] * msk[i]
+                    }
                 }
             }
         }
@@ -253,9 +265,15 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
             return
         }
 
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
         heightmap.withUnsafeMutableBufferPointer { buf in
-            DispatchQueue.concurrentPerform(iterations: buf.count) { i in
-                buf[i] = MathUtils.smoothTerrace(buf[i], steps: steps, sharpness: sharpness)
+            let n = buf.count
+            DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                let start = chunk * n / nc
+                let end = min((chunk + 1) * n / nc, n)
+                for i in start..<end {
+                    buf[i] = MathUtils.smoothTerrace(buf[i], steps: steps, sharpness: sharpness)
+                }
             }
         }
     }

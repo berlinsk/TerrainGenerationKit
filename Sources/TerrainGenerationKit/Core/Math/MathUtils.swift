@@ -244,17 +244,29 @@ extension MathUtils {
         guard range > 0 else {
             return
         }
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
         array.withUnsafeMutableBufferPointer { buf in
-            DispatchQueue.concurrentPerform(iterations: buf.count) { i in
-                buf[i] = (buf[i] - minVal) / range
+            let n = buf.count
+            DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                let start = chunk * n / nc
+                let end = min((chunk + 1) * n / nc, n)
+                for i in start..<end {
+                    buf[i] = (buf[i] - minVal) / range
+                }
             }
         }
     }
 
     public static func applyContrast(_ array: inout [Float], strength: Float) {
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
         array.withUnsafeMutableBufferPointer { buf in
-            DispatchQueue.concurrentPerform(iterations: buf.count) { i in
-                buf[i] = clamp((buf[i] - 0.5) * strength + 0.5, 0, 1)
+            let n = buf.count
+            DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                let start = chunk * n / nc
+                let end = min((chunk + 1) * n / nc, n)
+                for i in start..<end {
+                    buf[i] = clamp((buf[i] - 0.5) * strength + 0.5, 0, 1)
+                }
             }
         }
     }
