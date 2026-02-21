@@ -8,14 +8,14 @@ public protocol HeightmapServiceProtocol: Sendable {
         settings: GenerationSettings,
         seed: UInt64
     ) async -> [Float]
-    
+
     func applyErosion(
         heightmap: inout [Float],
         width: Int,
         height: Int,
         params: ErosionParameters,
         seed: UInt64
-    )
+    ) async
 }
 
 public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendable {
@@ -34,35 +34,34 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
     ) async -> [Float] {
         let noiseSeed = NoiseSeed(seed)
         
-        let primaryNoise = await noiseService.generateNoise(
-            width: width,
-            height: height,
-            parameters: settings.primaryNoise,
-            seed: noiseSeed.derive(0)
-        )
-        
-        var layers: [[Float]] = [primaryNoise]
+        var noiseResults = [Int: [Float]](minimumCapacity: 3)
+        await withTaskGroup(of: (Int, [Float]).self) { group in
+            group.addTask { [noiseService] in
+                (0, await noiseService.generateNoise(width: width, height: height, parameters: settings.primaryNoise, seed: noiseSeed.derive(0)))
+            }
+            if let params = settings.secondaryNoise {
+                group.addTask { [noiseService] in
+                    (1, await noiseService.generateNoise(width: width, height: height, parameters: params, seed: noiseSeed.derive(1)))
+                }
+            }
+            if let params = settings.detailNoise {
+                group.addTask { [noiseService] in
+                    (2, await noiseService.generateNoise(width: width, height: height, parameters: params, seed: noiseSeed.derive(2)))
+                }
+            }
+            for await (idx, noise) in group {
+                noiseResults[idx] = noise
+            }
+        }
+
+        var layers: [[Float]] = [noiseResults[0]!]
         var weights: [Float] = [settings.primaryWeight]
-        
-        if let secondaryParams = settings.secondaryNoise {
-            let secondaryNoise = await noiseService.generateNoise(
-                width: width,
-                height: height,
-                parameters: secondaryParams,
-                seed: noiseSeed.derive(1)
-            )
-            layers.append(secondaryNoise)
+        if settings.secondaryNoise != nil, let noise = noiseResults[1] {
+            layers.append(noise)
             weights.append(settings.secondaryWeight)
         }
-        
-        if let detailParams = settings.detailNoise {
-            let detailNoise = await noiseService.generateNoise(
-                width: width,
-                height: height,
-                parameters: detailParams,
-                seed: noiseSeed.derive(2)
-            )
-            layers.append(detailNoise)
+        if settings.detailNoise != nil, let noise = noiseResults[2] {
+            layers.append(noise)
             weights.append(settings.detailWeight)
         }
         
@@ -87,19 +86,19 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         height: Int,
         params: ErosionParameters,
         seed: UInt64
-    ) {
+    ) async {
         guard params.type != .none && params.iterations > 0 else {
             return
         }
-        
+
         let simulator = ErosionSimulator(params: params, seed: seed)
-        simulator.simulate(
+        await simulator.simulate(
             heightmap: &heightmap,
             width: width,
             height: height,
             type: params.type
         )
-        
+
         MathUtils.normalizeArray(&heightmap)
     }
     
@@ -153,12 +152,21 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
             height: height,
             type: .radial(falloff: 1.5)
         )
-        
-        for i in 0..<heightmap.count {
-            heightmap[i] = heightmap[i] * 0.7 + mask[i] * 0.3
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        heightmap.withUnsafeMutableBufferPointer { buf in
+            mask.withUnsafeBufferPointer { msk in
+                let n = buf.count
+                DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                    let start = chunk * n / nc
+                    let end = min((chunk + 1) * n / nc, n)
+                    for i in start..<end {
+                        buf[i] = buf[i] * 0.7 + msk[i] * 0.3
+                    }
+                }
+            }
         }
     }
-    
+
     private func applyArchipelagoMask(
         heightmap: inout [Float],
         width: Int,
@@ -169,12 +177,21 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
             height: height,
             type: .island(coastWidth: Float(min(width, height)) * 0.15)
         )
-        
-        for i in 0..<heightmap.count {
-            heightmap[i] = heightmap[i] * mask[i]
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        heightmap.withUnsafeMutableBufferPointer { buf in
+            mask.withUnsafeBufferPointer { msk in
+                let n = buf.count
+                DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                    let start = chunk * n / nc
+                    let end = min((chunk + 1) * n / nc, n)
+                    for i in start..<end {
+                        buf[i] = buf[i] * msk[i]
+                    }
+                }
+            }
         }
     }
-    
+
     private func applyPangaeaMask(
         heightmap: inout [Float],
         width: Int,
@@ -184,25 +201,24 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         let centerX = Float(width) / 2
         let centerY = Float(height) / 2
         let maxDist = min(centerX, centerY) * 0.8
-        
-        for y in 0..<height {
-            for x in 0..<width {
-                let idx = y * width + x
-                let dx = Float(x) - centerX
-                let dy = Float(y) - centerY
-                let dist = sqrt(dx * dx + dy * dy)
-                
-                let landMask: Float
-                if dist < maxDist * 0.6 {
-                    landMask = 1.0
-                } else if dist < maxDist {
-                    let t = (dist - maxDist * 0.6) / (maxDist * 0.4)
-                    landMask = 1 - MathUtils.smootherstep(0, 1, t)
-                } else {
-                    landMask = 0
+        heightmap.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: height) { y in
+                for x in 0..<width {
+                    let idx = y * width + x
+                    let dx = Float(x) - centerX
+                    let dy = Float(y) - centerY
+                    let dist = sqrt(dx * dx + dy * dy)
+                    let landMask: Float
+                    if dist < maxDist * 0.6 {
+                        landMask = 1.0
+                    } else if dist < maxDist {
+                        let t = (dist - maxDist * 0.6) / (maxDist * 0.4)
+                        landMask = 1 - MathUtils.smootherstep(0, 1, t)
+                    } else {
+                        landMask = 0
+                    }
+                    buf[idx] = buf[idx] * 0.5 + landMask * 0.5
                 }
-                
-                heightmap[idx] = heightmap[idx] * 0.5 + landMask * 0.5
             }
         }
     }
@@ -216,30 +232,26 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
     ) {
         for _ in 0..<passes {
             var smoothed = heightmap
-            
-            for y in 1..<(height - 1) {
-                for x in 1..<(width - 1) {
-                    let idx = y * width + x
-                    
-                    var sum: Float = heightmap[idx]
-                    var count: Float = 1
-                    
-                    for dy in -1...1 {
-                        for dx in -1...1 {
-                            if dx == 0 && dy == 0 {
-                                continue
+            heightmap.withUnsafeBufferPointer { src in
+                smoothed.withUnsafeMutableBufferPointer { dst in
+                    DispatchQueue.concurrentPerform(iterations: height - 2) { row in
+                        let y = row + 1
+                        for x in 1..<(width - 1) {
+                            let idx = y * width + x
+                            var sum: Float = src[idx]
+                            var count: Float = 1
+                            for dy in -1...1 {
+                                for dx in -1...1 {
+                                    if dx == 0 && dy == 0 { continue }
+                                    sum += src[(y + dy) * width + (x + dx)]
+                                    count += 1
+                                }
                             }
-                            let nidx = (y + dy) * width + (x + dx)
-                            sum += heightmap[nidx]
-                            count += 1
+                            dst[idx] = MathUtils.lerp(src[idx], sum / count, strength)
                         }
                     }
-                    
-                    let avg = sum / count
-                    smoothed[idx] = MathUtils.lerp(heightmap[idx], avg, strength)
                 }
             }
-            
             heightmap = smoothed
         }
     }
@@ -252,13 +264,17 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         guard steps > 0 else {
             return
         }
-        
-        for i in 0..<heightmap.count {
-            heightmap[i] = MathUtils.smoothTerrace(
-                heightmap[i],
-                steps: steps,
-                sharpness: sharpness
-            )
+
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        heightmap.withUnsafeMutableBufferPointer { buf in
+            let n = buf.count
+            DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                let start = chunk * n / nc
+                let end = min((chunk + 1) * n / nc, n)
+                for i in start..<end {
+                    buf[i] = MathUtils.smoothTerrace(buf[i], steps: steps, sharpness: sharpness)
+                }
+            }
         }
     }
     

@@ -15,18 +15,18 @@ public final class ErosionSimulator: @unchecked Sendable {
         width: Int,
         height: Int,
         type: ErosionType
-    ) {
+    ) async {
         switch type {
         case .none:
             break
         case .hydraulic:
-            hydraulic.erode(heightmap: &heightmap, width: width, height: height)
+            await hydraulic.erode(heightmap: &heightmap, width: width, height: height)
         case .thermal:
             thermal.erode(heightmap: &heightmap, width: width, height: height)
         case .combined:
             let hydraulicIterations = hydraulic.params.iterations / 2
             let thermalIterations = thermal.params.iterations / 200
-            
+
             for _ in 0..<10 {
                 thermal.erode(
                     heightmap: &heightmap,
@@ -34,8 +34,8 @@ public final class ErosionSimulator: @unchecked Sendable {
                     height: height,
                     iterations: thermalIterations / 10
                 )
-                
-                simulateHydraulicPortion(
+
+                await simulateHydraulicPortion(
                     heightmap: &heightmap,
                     width: width,
                     height: height,
@@ -44,19 +44,19 @@ public final class ErosionSimulator: @unchecked Sendable {
             }
         }
     }
-    
+
     private func simulateHydraulicPortion(
         heightmap: inout [Float],
         width: Int,
         height: Int,
         iterations: Int
-    ) {
+    ) async {
         var tempParams = hydraulic.params
         tempParams.iterations = iterations
         let tempHydraulic = HydraulicErosion(
             params: tempParams,
             seed: UInt64.random(in: 0...UInt64.max)
         )
-        tempHydraulic.erode(heightmap: &heightmap, width: width, height: height)
+        await tempHydraulic.erode(heightmap: &heightmap, width: width, height: height)
     }
 }

@@ -117,15 +117,38 @@ public struct MapData: Sendable {
     }
     
     public mutating func computeSteepnessMap() {
-        for y in 0..<height {
-            for x in 0..<width {
-                let grad = gradient(at: x, y: y)
-                steepnessMap[y * width + x] = sqrt(grad.x * grad.x + grad.y * grad.y)
+        let w = width
+        let h = height
+        heightmap.withUnsafeBufferPointer { hm in
+            steepnessMap.withUnsafeMutableBufferPointer { buf in
+                DispatchQueue.concurrentPerform(iterations: h) { y in
+                    for x in 0..<w {
+                        let idx = y * w + x
+                        let left: Float = x > 0 ? hm[idx - 1] : 0
+                        let right: Float = x < w - 1 ? hm[idx + 1] : 0
+                        let up: Float = y > 0 ? hm[(y - 1) * w + x] : 0
+                        let down: Float = y < h - 1 ? hm[(y + 1) * w + x] : 0
+                        let gx = (right - left) * 0.5
+                        let gy = (down - up) * 0.5
+                        buf[idx] = sqrt(gx * gx + gy * gy)
+                    }
+                }
             }
         }
-        guard let maxSteepness = steepnessMap.max(), maxSteepness > 0 else { return }
-        for i in 0..<steepnessMap.count {
-            steepnessMap[i] /= maxSteepness
+        guard let maxSteepness = steepnessMap.max(), maxSteepness > 0 else {
+            return
+        }
+        let maxS = maxSteepness
+        let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        steepnessMap.withUnsafeMutableBufferPointer { buf in
+            let n = buf.count
+            DispatchQueue.concurrentPerform(iterations: nc) { chunk in
+                let start = chunk * n / nc
+                let end = min((chunk + 1) * n / nc, n)
+                for i in start..<end {
+                    buf[i] /= maxS
+                }
+            }
         }
     }
 

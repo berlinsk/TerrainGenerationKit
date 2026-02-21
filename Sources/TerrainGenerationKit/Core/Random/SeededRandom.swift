@@ -26,19 +26,21 @@ public final class SeededRandom: @unchecked Sendable {
     
     public func next() -> UInt64 {
         lock.lock()
-        defer { lock.unlock() }
-        
+        defer {
+            lock.unlock()
+        }
+
         let result = rotl(state.1 &* 5, 7) &* 9
         let t = state.1 << 17
-        
+
         state.2 ^= state.0
         state.3 ^= state.1
         state.1 ^= state.2
         state.0 ^= state.3
-        
+
         state.2 ^= t
         state.3 = rotl(state.3, 45)
-        
+
         return result
     }
     
