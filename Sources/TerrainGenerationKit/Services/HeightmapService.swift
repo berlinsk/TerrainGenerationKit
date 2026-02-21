@@ -8,14 +8,14 @@ public protocol HeightmapServiceProtocol: Sendable {
         settings: GenerationSettings,
         seed: UInt64
     ) async -> [Float]
-    
+
     func applyErosion(
         heightmap: inout [Float],
         width: Int,
         height: Int,
         params: ErosionParameters,
         seed: UInt64
-    )
+    ) async
 }
 
 public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendable {
@@ -86,19 +86,19 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         height: Int,
         params: ErosionParameters,
         seed: UInt64
-    ) {
+    ) async {
         guard params.type != .none && params.iterations > 0 else {
             return
         }
-        
+
         let simulator = ErosionSimulator(params: params, seed: seed)
-        simulator.simulate(
+        await simulator.simulate(
             heightmap: &heightmap,
             width: width,
             height: height,
             type: params.type
         )
-        
+
         MathUtils.normalizeArray(&heightmap)
     }
     

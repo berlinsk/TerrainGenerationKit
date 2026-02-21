@@ -59,7 +59,7 @@ public final class MapGenerator: MapGeneratorProtocol, @unchecked Sendable {
             let erosionTypeText = settings.erosion.type == .hydraulic ? "hydraulic" : "thermal"
             report(.erosion, 0.25, "Simulating \(erosionTypeText) erosion...")
             logger.startStage("erosion")
-            heightmapService.applyErosion(
+            await heightmapService.applyErosion(
                 heightmap: &heightmap,
                 width: width,
                 height: height,
