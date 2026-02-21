@@ -141,6 +141,9 @@ let mesh = meshGenerator.generateMesh(from: map, settings: TerrainMeshSettings(
 
 ## Changelog
 
+### 1.0.4
+Massive performance improvements through chunked parallelism and unsafe buffer pointers. Generation now 2-5x faster on large maps. Parallelized noise generation, hydraulic erosion(batched via TaskGroup), smoothing, biome processing and post-processing. Fixed release build crash in temperature/humidity generation
+
 ### 1.0.3
 Added `MapTextureGenerator` and `TerrainMeshGenerator` with Metal compute shaders and CPU fallbacks. Factory methods `createTextureGenerator()` and `createMeshGenerator()` added to `TerrainGenerationKit`
 
