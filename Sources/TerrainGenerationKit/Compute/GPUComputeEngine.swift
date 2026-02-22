@@ -3,64 +3,147 @@ import Metal
 import simd
 
 public final class GPUComputeEngine: @unchecked Sendable {
-    
-    private let device: MTLDevice
-    private let commandQueue: MTLCommandQueue
-    private let supportsNonUniformThreadgroups: Bool
-    private let isSimulator: Bool
-    
+
+    public let device: MTLDevice
+    public let commandQueue: MTLCommandQueue
+    let supportsNonUniformThreadgroups: Bool
+    let isSimulator: Bool
+
     private var jfaInitPipeline: MTLComputePipelineState?
     private var jfaStepPipeline: MTLComputePipelineState?
     private var jfaFinalizePipeline: MTLComputePipelineState?
     private var poissonPipeline: MTLComputePipelineState?
     private var objectPlacementPipeline: MTLComputePipelineState?
-    
+
+    private var pipelineCache: [String: MTLComputePipelineState] = [:]
+    private let pipelineLock = NSLock()
+
+    public private(set) lazy var bufferPool = GPUBufferPool(device: device)
+    private var metalLibrary: MTLLibrary?
+
     public init?() {
         guard let device = MTLCreateSystemDefaultDevice(),
               let commandQueue = device.makeCommandQueue() else {
             return nil
         }
-        
+
         self.device = device
         self.commandQueue = commandQueue
         self.supportsNonUniformThreadgroups = device.supportsFamily(.apple4)
-        
+
         #if targetEnvironment(simulator)
         self.isSimulator = true
         #else
         self.isSimulator = false
         #endif
-        
+
+        self.metalLibrary = try? device.makeDefaultLibrary(bundle: Bundle.module)
         setupPipelines()
     }
-    
+
     private func setupPipelines() {
-        guard let library = try? device.makeDefaultLibrary(bundle: Bundle.module) else {
+        guard let library = metalLibrary else {
             return
         }
-        
-        if let function = library.makeFunction(name: "jumpFloodInit") {
-            jfaInitPipeline = try? device.makeComputePipelineState(function: function)
+
+        jfaInitPipeline = loadPipeline(name: "jumpFloodInit", library: library)
+        jfaStepPipeline = loadPipeline(name: "jumpFloodStep", library: library)
+        jfaFinalizePipeline = loadPipeline(name: "jumpFloodFinalize", library: library)
+        poissonPipeline = loadPipeline(name: "poissonDiskSample", library: library)
+        objectPlacementPipeline = loadPipeline(name: "placeObjects", library: library)
+    }
+
+    public func pipeline(for name: String) -> MTLComputePipelineState? {
+        pipelineLock.lock()
+        if let cached = pipelineCache[name] {
+            pipelineLock.unlock()
+            return cached
         }
-        
-        if let function = library.makeFunction(name: "jumpFloodStep") {
-            jfaStepPipeline = try? device.makeComputePipelineState(function: function)
+        pipelineLock.unlock()
+
+        guard let library = metalLibrary else {
+            return nil
         }
-        
-        if let function = library.makeFunction(name: "jumpFloodFinalize") {
-            jfaFinalizePipeline = try? device.makeComputePipelineState(function: function)
+        return loadPipeline(name: name, library: library)
+    }
+
+    @discardableResult
+    private func loadPipeline(name: String, library: MTLLibrary) -> MTLComputePipelineState? {
+        guard let function = library.makeFunction(name: name),
+              let state = try? device.makeComputePipelineState(function: function) else {
+            return nil
         }
-        
-        if let function = library.makeFunction(name: "poissonDiskSample") {
-            poissonPipeline = try? device.makeComputePipelineState(function: function)
+        pipelineLock.lock()
+        pipelineCache[name] = state
+        pipelineLock.unlock()
+        return state
+    }
+
+    public func makeBuffer<T>(from array: [T], width: Int = 0, height: Int = 0) -> GPUBuffer<T>? {
+        let byteLength = array.count * MemoryLayout<T>.stride
+        guard let mtl = bufferPool.acquire(byteLength: byteLength) else {
+            return nil
         }
-        
-        if let function = library.makeFunction(name: "placeObjects") {
-            objectPlacementPipeline = try? device.makeComputePipelineState(function: function)
+        array.withUnsafeBufferPointer { src in
+            mtl.contents().copyMemory(from: src.baseAddress!, byteCount: byteLength)
         }
+        return GPUBuffer(buffer: mtl, count: array.count, width: width, height: height)
+    }
+
+    public func makeBuffer<T>(type: T.Type, count: Int, width: Int = 0, height: Int = 0) -> GPUBuffer<T>? {
+        let byteLength = count * MemoryLayout<T>.stride
+        guard let mtl = bufferPool.acquire(byteLength: byteLength) else {
+            return nil
+        }
+        return GPUBuffer(buffer: mtl, count: count, width: width, height: height)
+    }
+
+    public func recycle<T>(_ buffer: GPUBuffer<T>) {
+        bufferPool.release(buffer.buffer)
+    }
+
+    public func encode(
+        pipeline: MTLComputePipelineState,
+        buffers: [(MTLBuffer, Int)],
+        gridWidth: Int,
+        gridHeight: Int
+    ) -> Bool {
+        guard let cmdBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = cmdBuffer.makeComputeCommandEncoder() else {
+            return false
+        }
+        encoder.setComputePipelineState(pipeline)
+        for (buffer, index) in buffers {
+            encoder.setBuffer(buffer, offset: 0, index: index)
+        }
+        dispatchThreadsSafe(encoder: encoder, pipeline: pipeline, width: gridWidth, height: gridHeight)
+        encoder.endEncoding()
+        cmdBuffer.commit()
+        cmdBuffer.waitUntilCompleted()
+        return cmdBuffer.status != .error
+    }
+
+    public func encode1D(
+        pipeline: MTLComputePipelineState,
+        buffers: [(MTLBuffer, Int)],
+        count: Int
+    ) -> Bool {
+        guard let cmdBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = cmdBuffer.makeComputeCommandEncoder() else {
+            return false
+        }
+        encoder.setComputePipelineState(pipeline)
+        for (buffer, index) in buffers {
+            encoder.setBuffer(buffer, offset: 0, index: index)
+        }
+        dispatchThreads1D(encoder: encoder, pipeline: pipeline, count: count)
+        encoder.endEncoding()
+        cmdBuffer.commit()
+        cmdBuffer.waitUntilCompleted()
+        return cmdBuffer.status != .error
     }
     
-    private func dispatchThreadsSafe(
+    func dispatchThreadsSafe(
         encoder: MTLComputeCommandEncoder,
         pipeline: MTLComputePipelineState,
         width: Int,
@@ -69,7 +152,7 @@ public final class GPUComputeEngine: @unchecked Sendable {
         let w = max(1, min(16, pipeline.threadExecutionWidth))
         let h = max(1, min(16, pipeline.maxTotalThreadsPerThreadgroup / w))
         let threadsPerGroup = MTLSize(width: w, height: h, depth: 1)
-        
+
         if supportsNonUniformThreadgroups && !isSimulator {
             let threadsPerGrid = MTLSize(width: width, height: height, depth: 1)
             encoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerGroup)
@@ -79,6 +162,24 @@ public final class GPUComputeEngine: @unchecked Sendable {
                 height: (height + threadsPerGroup.height - 1) / threadsPerGroup.height,
                 depth: 1
             )
+            encoder.dispatchThreadgroups(threadgroupsPerGrid, threadsPerThreadgroup: threadsPerGroup)
+        }
+    }
+
+    func dispatchThreads1D(
+        encoder: MTLComputeCommandEncoder,
+        pipeline: MTLComputePipelineState,
+        count: Int
+    ) {
+        let threadWidth = pipeline.threadExecutionWidth
+        let threadsPerGroup = MTLSize(width: threadWidth, height: 1, depth: 1)
+
+        if supportsNonUniformThreadgroups && !isSimulator {
+            let threadsPerGrid = MTLSize(width: count, height: 1, depth: 1)
+            encoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerGroup)
+        } else {
+            let groups = (count + threadWidth - 1) / threadWidth
+            let threadgroupsPerGrid = MTLSize(width: groups, height: 1, depth: 1)
             encoder.dispatchThreadgroups(threadgroupsPerGrid, threadsPerThreadgroup: threadsPerGroup)
         }
     }
