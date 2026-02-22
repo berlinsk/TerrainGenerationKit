@@ -9,11 +9,17 @@ public protocol PostProcessingServiceProtocol: Sendable {
 }
 
 public final class PostProcessingService: PostProcessingServiceProtocol, @unchecked Sendable {
-    
+
     private let heightmapService: HeightmapService
-    
+    private let gpuProcessor: GPUHeightmapProcessor?
+
     public init(heightmapService: HeightmapService = HeightmapService()) {
         self.heightmapService = heightmapService
+        if let gpu = GPUComputeEngine.shared {
+            self.gpuProcessor = GPUHeightmapProcessor(gpu: gpu)
+        } else {
+            self.gpuProcessor = nil
+        }
     }
     
     public func process(
@@ -31,11 +37,15 @@ public final class PostProcessingService: PostProcessingServiceProtocol, @unchec
         }
         
         if params.normalizeHeightmap {
-            MathUtils.normalizeArray(&mapData.heightmap)
+            if gpuProcessor?.normalize(&mapData.heightmap) != true {
+                MathUtils.normalizeArray(&mapData.heightmap)
+            }
         }
-        
+
         if params.contrastEnhancement != 1.0 {
-            MathUtils.applyContrast(&mapData.heightmap, strength: params.contrastEnhancement)
+            if gpuProcessor?.applyContrast(&mapData.heightmap, strength: params.contrastEnhancement) != true {
+                MathUtils.applyContrast(&mapData.heightmap, strength: params.contrastEnhancement)
+            }
         }
         
         if params.terraceCount > 0 {

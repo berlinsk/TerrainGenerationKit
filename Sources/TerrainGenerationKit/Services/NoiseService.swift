@@ -18,12 +18,15 @@ public protocol NoiseServiceProtocol: Sendable {
 public final class NoiseService: NoiseServiceProtocol, @unchecked Sendable {
 
     private let gpuNoiseGenerator: GPUNoiseGenerator?
+    private let gpuProcessor: GPUHeightmapProcessor?
 
     public init() {
         if let gpu = GPUComputeEngine.shared {
             self.gpuNoiseGenerator = GPUNoiseGenerator(gpu: gpu)
+            self.gpuProcessor = GPUHeightmapProcessor(gpu: gpu)
         } else {
             self.gpuNoiseGenerator = nil
+            self.gpuProcessor = nil
         }
     }
 
@@ -40,7 +43,9 @@ public final class NoiseService: NoiseServiceProtocol, @unchecked Sendable {
             seed: seed
         ) {
             var result = gpuResult
-            MathUtils.normalizeArray(&result)
+            if gpuProcessor?.normalize(&result) != true {
+                MathUtils.normalizeArray(&result)
+            }
             return result
         }
 
@@ -141,6 +146,10 @@ public final class NoiseService: NoiseServiceProtocol, @unchecked Sendable {
             return first
         }
 
+        if let gpuResult = gpuProcessor?.blendLayers(layers: layers, weights: weights) {
+            return gpuResult
+        }
+
         let count = first.count
         var result = [Float](repeating: 0, count: count)
 
@@ -174,7 +183,9 @@ public final class NoiseService: NoiseServiceProtocol, @unchecked Sendable {
     }
     
     public func normalizeNoise(_ noise: inout [Float]) {
-        MathUtils.normalizeArray(&noise)
+        if gpuProcessor?.normalize(&noise) != true {
+            MathUtils.normalizeArray(&noise)
+        }
     }
     
     public func applyMask(_ noise: inout [Float], mask: [Float], strength: Float = 1.0) {

@@ -260,6 +260,10 @@ float fbm(
         freq *= lacunarity;
     }
 
+    if (maxValue == 0.0) {
+        return 0.0;
+    }
+
     return total / maxValue;
 }
 
