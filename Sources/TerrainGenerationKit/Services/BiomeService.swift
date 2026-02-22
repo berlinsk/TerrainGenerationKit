@@ -34,13 +34,16 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
 
     private let noiseService: NoiseService
     private let gpuClimate: GPUClimateGenerator?
+    private let gpuBiome: GPUBiomeClassifier?
 
     public init(noiseService: NoiseService = NoiseService()) {
         self.noiseService = noiseService
         if let gpu = GPUComputeEngine.shared {
             self.gpuClimate = GPUClimateGenerator(gpu: gpu)
+            self.gpuBiome = GPUBiomeClassifier(gpu: gpu)
         } else {
             self.gpuClimate = nil
+            self.gpuBiome = nil
         }
     }
     
@@ -54,6 +57,20 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
         params: BiomeParameters,
         selection: BiomeSelection
     ) -> [UInt8] {
+        if let gpuBiome = gpuBiome,
+           let result = gpuBiome.classifyBiomes(
+               heightmap: heightmap,
+               temperatureMap: temperatureMap,
+               humidityMap: humidityMap,
+               waterData: waterData,
+               width: width,
+               height: height,
+               params: params,
+               selection: selection
+           ) {
+            return result
+        }
+
         let classifier = BiomeClassifier(parameters: params)
         var biomeMap = [UInt8](repeating: 0, count: width * height)
 
@@ -87,7 +104,7 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
                 }
             }
         }
-        
+
         smoothBiomeTransitions(
             biomeMap: &biomeMap,
             heightmap: heightmap,
@@ -95,7 +112,7 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
             height: height,
             params: params
         )
-        
+
         return biomeMap
     }
     
