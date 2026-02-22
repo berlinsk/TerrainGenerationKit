@@ -31,11 +31,17 @@ public protocol BiomeServiceProtocol: Sendable {
 }
 
 public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
-    
+
     private let noiseService: NoiseService
-    
+    private let gpuClimate: GPUClimateGenerator?
+
     public init(noiseService: NoiseService = NoiseService()) {
         self.noiseService = noiseService
+        if let gpu = GPUComputeEngine.shared {
+            self.gpuClimate = GPUClimateGenerator(gpu: gpu)
+        } else {
+            self.gpuClimate = nil
+        }
     }
     
     public func generateBiomes(
@@ -153,9 +159,20 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
             parameters: noiseParams,
             seed: seed
         )
-        
+
         noiseService.normalizeNoise(&temperatureNoise)
-        
+
+        if let gpuClimate = gpuClimate,
+           let result = gpuClimate.generateTemperatureMap(
+               heightmap: heightmap,
+               noise: temperatureNoise,
+               width: width,
+               height: height,
+               temperatureVariation: params.temperatureVariation
+           ) {
+            return result
+        }
+
         var temperatureMap = [Float](repeating: 0, count: width * height)
 
         temperatureMap.withUnsafeMutableBufferPointer { buf in
@@ -204,8 +221,6 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
         )
         
         noiseService.normalizeNoise(&humidityNoise)
-        
-        var humidityMap = [Float](repeating: 0, count: width * height)
 
         let waterDistance = calculateWaterDistance(
             heightmap: heightmap,
@@ -213,6 +228,20 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
             height: height,
             seaLevel: params.seaLevel
         )
+
+        if let gpuClimate = gpuClimate,
+           let result = gpuClimate.generateHumidityMap(
+               heightmap: heightmap,
+               noise: humidityNoise,
+               waterDistance: waterDistance,
+               width: width,
+               height: height,
+               humidityVariation: params.humidityVariation
+           ) {
+            return result
+        }
+
+        var humidityMap = [Float](repeating: 0, count: width * height)
 
         humidityMap.withUnsafeMutableBufferPointer { buf in
             heightmap.withUnsafeBufferPointer { hm in
