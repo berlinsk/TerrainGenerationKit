@@ -16,10 +16,43 @@ public protocol NoiseServiceProtocol: Sendable {
 }
 
 public final class NoiseService: NoiseServiceProtocol, @unchecked Sendable {
-    
-    public init() {}
-    
+
+    private let gpuNoiseGenerator: GPUNoiseGenerator?
+
+    public init() {
+        if let gpu = GPUComputeEngine.shared {
+            self.gpuNoiseGenerator = GPUNoiseGenerator(gpu: gpu)
+        } else {
+            self.gpuNoiseGenerator = nil
+        }
+    }
+
     public func generateNoise(
+        width: Int,
+        height: Int,
+        parameters: NoiseParameters,
+        seed: UInt64
+    ) async -> [Float] {
+        if let gpuResult = gpuNoiseGenerator?.generateNoiseArray(
+            width: width,
+            height: height,
+            parameters: parameters,
+            seed: seed
+        ) {
+            var result = gpuResult
+            MathUtils.normalizeArray(&result)
+            return result
+        }
+
+        return await generateNoiseCPU(
+            width: width,
+            height: height,
+            parameters: parameters,
+            seed: seed
+        )
+    }
+
+    private func generateNoiseCPU(
         width: Int,
         height: Int,
         parameters: NoiseParameters,
