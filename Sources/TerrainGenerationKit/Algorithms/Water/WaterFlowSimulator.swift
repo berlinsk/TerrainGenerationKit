@@ -2,10 +2,10 @@ import Foundation
 import simd
 
 public final class WaterFlowSimulator: @unchecked Sendable {
-    
+
     public let params: WaterParameters
     private let random: SeededRandom
-    
+
     public init(params: WaterParameters, seed: UInt64) {
         self.params = params
         self.random = SeededRandom(seed: seed)
@@ -81,65 +81,82 @@ public final class WaterFlowSimulator: @unchecked Sendable {
         height: Int,
         seaLevel: Float
     ) -> (accumulation: [Float], directions: [FlowDirection]) {
-        var flowDirections = [FlowDirection](repeating: .none, count: width * height)
+        let flowDirections = computeFlowDirections(
+            heightmap: heightmap,
+            width: width,
+            height: height,
+            seaLevel: seaLevel
+        )
+
         var flowAccumulation = [Float](repeating: 1, count: width * height)
-        
+
+        var sortedIndices = Array(0..<(width * height))
+        sortedIndices.sort { heightmap[$0] > heightmap[$1] }
+
+        for idx in sortedIndices {
+            let dir = flowDirections[idx]
+            if dir == .none {
+                continue
+            }
+
+            let y = idx / width
+            let x = idx % width
+            let (dx, dy) = dir.offset
+            let nx = x + dx
+            let ny = y + dy
+
+            if nx >= 0 && nx < width && ny >= 0 && ny < height {
+                let nidx = ny * width + nx
+                flowAccumulation[nidx] += flowAccumulation[idx]
+            }
+        }
+
+        return (flowAccumulation, flowDirections)
+    }
+
+    private func computeFlowDirections(
+        heightmap: [Float],
+        width: Int,
+        height: Int,
+        seaLevel: Float
+    ) -> [FlowDirection] {
+        var flowDirections = [FlowDirection](repeating: .none, count: width * height)
+
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
                 let h = heightmap[idx]
-                
+
                 if h < seaLevel {
                     continue
                 }
-                
+
                 var steepestDir = FlowDirection.none
                 var steepestSlope: Float = 0
-                
+
                 for dir in FlowDirection.all {
                     let (dx, dy) = dir.offset
                     let nx = x + dx
                     let ny = y + dy
-                    
+
                     if nx >= 0 && nx < width && ny >= 0 && ny < height {
                         let nidx = ny * width + nx
                         let nh = heightmap[nidx]
                         let dist = sqrt(Float(dx * dx + dy * dy))
                         let slope = (h - nh) / dist
-                        
+
                         if slope > steepestSlope {
                             steepestSlope = slope
                             steepestDir = dir
                         }
                     }
                 }
-                
+
                 flowDirections[idx] = steepestDir
             }
         }
-        
-        var sortedIndices = Array(0..<(width * height))
-        sortedIndices.sort { heightmap[$0] > heightmap[$1] }
-        
-        for idx in sortedIndices {
-            let dir = flowDirections[idx]
-            if dir == .none {
-                continue
-            }
-            
-            let y = idx / width
-            let x = idx % width
-            let (dx, dy) = dir.offset
-            let nx = x + dx
-            let ny = y + dy
-            
-            if nx >= 0 && nx < width && ny >= 0 && ny < height {
-                let nidx = ny * width + nx
-                flowAccumulation[nidx] += flowAccumulation[idx]
-            }
-        }
-        
-        return (flowAccumulation, flowDirections)
+
+        return flowDirections
     }
     
     private func findRiverSources(
@@ -301,22 +318,22 @@ public final class WaterFlowSimulator: @unchecked Sendable {
         height: Int
     ) {
         var newRiverMask = waterData.riverMask
-        
+
         let maxFlow = flowAccumulation.max() ?? 1
-        
+
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
-                
+
                 if waterData.riverMask[idx] > 0 {
                     let flowRatio = flowAccumulation[idx] / maxFlow
                     let extraWidth = Int(flowRatio * 3)
-                    
+
                     for dy in -extraWidth...extraWidth {
                         for dx in -extraWidth...extraWidth {
                             let nx = x + dx
                             let ny = y + dy
-                            
+
                             if nx >= 0 && nx < width && ny >= 0 && ny < height {
                                 let dist = sqrt(Float(dx * dx + dy * dy))
                                 if dist <= Float(extraWidth) {
@@ -333,7 +350,7 @@ public final class WaterFlowSimulator: @unchecked Sendable {
                 }
             }
         }
-        
+
         waterData.riverMask = newRiverMask
     }
     

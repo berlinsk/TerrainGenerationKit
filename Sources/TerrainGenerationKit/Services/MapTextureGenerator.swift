@@ -68,7 +68,9 @@ public final class MapTextureGenerator: MapTextureGeneratorProtocol {
     }
 
     private func generateTextureGPU(mapData: MapData, mode: MapRenderMode) -> CGImage? {
-        guard let device, let commandQueue, let pipeline else { return nil }
+        guard let device, let commandQueue, let pipeline else {
+            return nil
+        }
 
         let width = mapData.width
         let height = mapData.height
@@ -95,7 +97,9 @@ public final class MapTextureGenerator: MapTextureGeneratorProtocol {
             let wmBuf = makeBuffer(mapData.cityNetwork.wallMask),
             let rdBuf = makeBuffer(mapData.cityNetwork.roadSDF),
             let outBuf = device.makeBuffer(length: count * 4, options: .storageModeShared)
-        else { return nil }
+        else {
+            return nil
+        }
 
         var params = TextureParams(
             width: UInt32(width),
@@ -103,10 +107,14 @@ public final class MapTextureGenerator: MapTextureGeneratorProtocol {
             renderMode: modeIndex(mode),
             seaLevel: mapData.metadata.settings.biome.seaLevel
         )
-        guard let paramBuf = device.makeBuffer(bytes: &params, length: MemoryLayout<TextureParams>.stride, options: .storageModeShared) else { return nil }
+        guard let paramBuf = device.makeBuffer(bytes: &params, length: MemoryLayout<TextureParams>.stride, options: .storageModeShared) else {
+            return nil
+        }
 
         guard let cmdBuf = commandQueue.makeCommandBuffer(),
-              let encoder = cmdBuf.makeComputeCommandEncoder() else { return nil }
+              let encoder = cmdBuf.makeComputeCommandEncoder() else {
+            return nil
+        }
 
         encoder.setComputePipelineState(pipeline)
         encoder.setBuffer(hBuf, offset: 0, index: 0)
@@ -147,7 +155,9 @@ public final class MapTextureGenerator: MapTextureGeneratorProtocol {
         cmdBuf.commit()
         cmdBuf.waitUntilCompleted()
 
-        if cmdBuf.status == .error { return nil }
+        if cmdBuf.status == .error {
+            return nil
+        }
 
         let rawPtr = outBuf.contents().bindMemory(to: UInt8.self, capacity: count * 4)
         var pixels = [UInt8](repeating: 0, count: count * 4)
@@ -411,7 +421,9 @@ public final class MapTextureGenerator: MapTextureGeneratorProtocol {
 
     private func createCGImage(from pixels: [UInt8], width: Int, height: Int) -> CGImage? {
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
-        guard let provider = CGDataProvider(data: Data(pixels) as CFData) else { return nil }
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData) else {
+            return nil
+        }
         return CGImage(
             width: width,
             height: height,

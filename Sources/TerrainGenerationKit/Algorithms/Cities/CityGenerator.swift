@@ -44,7 +44,9 @@ public final class CityGenerator: @unchecked Sendable {
         let riverDistanceMap = computeDistanceMap(
             width: width,
             height: height,
-            isSeed: { x, y in waterData.riverMask[y * width + x] > 0.5 },
+            isSeed: {
+                x, y in waterData.riverMask[y * width + x] > 0.5
+            },
             maxDistance: 25
         )
         
