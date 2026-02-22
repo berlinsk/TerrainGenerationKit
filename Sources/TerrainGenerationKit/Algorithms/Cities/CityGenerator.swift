@@ -6,6 +6,7 @@ public final class CityGenerator: @unchecked Sendable {
     private let params: CityGenerationParameters
     private var rng: SeededRandom
     private let streetWidth: Int = 2
+    private let gpuCity: GPUCityProcessor?
     
     private let prefixes = [
         "North", "South", "East", "West", "New", "Old", "Port", "Fort",
@@ -27,6 +28,11 @@ public final class CityGenerator: @unchecked Sendable {
     public init(params: CityGenerationParameters, seed: UInt64) {
         self.params = params
         self.rng = SeededRandom(seed: seed)
+        if let gpu = GPUComputeEngine.shared {
+            self.gpuCity = GPUCityProcessor(gpu: gpu)
+        } else {
+            self.gpuCity = nil
+        }
     }
     
     public func generateCities(
@@ -40,32 +46,68 @@ public final class CityGenerator: @unchecked Sendable {
         guard params.enabled && params.cityCount > 0 else {
             return []
         }
-        
-        let riverDistanceMap = computeDistanceMap(
-            width: width,
-            height: height,
-            isSeed: {
-                x, y in waterData.riverMask[y * width + x] > 0.5
-            },
-            maxDistance: 25
-        )
-        
-        let coastDistanceMap = computeDistanceMap(
-            width: width,
-            height: height,
-            isSeed: { x, y in heightmap[y * width + x] < seaLevel },
-            maxDistance: 30
-        )
-        
-        let locations = findCityLocations(
-            heightmap: heightmap,
-            biomeMap: biomeMap,
-            riverDistanceMap: riverDistanceMap,
-            coastDistanceMap: coastDistanceMap,
-            width: width,
-            height: height,
-            seaLevel: seaLevel
-        )
+
+        let riverDistanceMap: [Int]
+        if let gpuCity = gpuCity,
+           let gpuResult = gpuCity.computeDistanceMap(
+               heightmap: heightmap,
+               riverMask: waterData.riverMask,
+               width: width, height: height,
+               type: 0, maxDistance: 25, seaLevel: seaLevel
+           ) {
+            riverDistanceMap = gpuResult
+        } else {
+            riverDistanceMap = computeDistanceMap(
+                width: width, height: height,
+                isSeed: { x, y in waterData.riverMask[y * width + x] > 0.5 },
+                maxDistance: 25
+            )
+        }
+
+        let coastDistanceMap: [Int]
+        if let gpuCity = gpuCity,
+           let gpuResult = gpuCity.computeDistanceMap(
+               heightmap: heightmap,
+               riverMask: waterData.riverMask,
+               width: width, height: height,
+               type: 1, maxDistance: 30, seaLevel: seaLevel
+           ) {
+            coastDistanceMap = gpuResult
+        } else {
+            coastDistanceMap = computeDistanceMap(
+                width: width, height: height,
+                isSeed: { x, y in heightmap[y * width + x] < seaLevel },
+                maxDistance: 30
+            )
+        }
+
+        let locations: [SIMD2<Int>]
+        if let gpuCity = gpuCity,
+           let gpuScores = gpuCity.scoreCityLocations(
+               heightmap: heightmap,
+               biomeMap: biomeMap,
+               riverDistMap: riverDistanceMap,
+               coastDistMap: coastDistanceMap,
+               width: width, height: height,
+               seaLevel: seaLevel,
+               preferRivers: params.preferRivers,
+               preferCoast: params.preferCoast,
+               avoidMountains: params.avoidMountains
+           ) {
+            locations = selectLocationsFromScores(
+                scores: gpuScores,
+                width: width, height: height
+            )
+        } else {
+            locations = findCityLocations(
+                heightmap: heightmap,
+                biomeMap: biomeMap,
+                riverDistanceMap: riverDistanceMap,
+                coastDistanceMap: coastDistanceMap,
+                width: width, height: height,
+                seaLevel: seaLevel
+            )
+        }
         
         var cities: [City] = []
         
@@ -149,6 +191,53 @@ public final class CityGenerator: @unchecked Sendable {
         return distanceMap
     }
     
+    private func selectLocationsFromScores(
+        scores: [Float],
+        width: Int,
+        height: Int
+    ) -> [SIMD2<Int>] {
+        let gridStep = max(8, min(width, height) / 64)
+        var candidates: [(SIMD2<Int>, Float)] = []
+
+        for y in stride(from: gridStep, to: height - gridStep, by: gridStep) {
+            for x in stride(from: gridStep, to: width - gridStep, by: gridStep) {
+                let score = scores[y * width + x]
+                if score > 0 {
+                    candidates.append((SIMD2(x, y), score))
+                }
+            }
+        }
+
+        candidates.sort {
+            $0.1 > $1.1
+        }
+
+        var locations: [SIMD2<Int>] = []
+        let minDistSq = params.minCityDistance * params.minCityDistance
+
+        for (candidate, _) in candidates {
+            if locations.count >= params.cityCount {
+                break
+            }
+
+            var tooClose = false
+            for existing in locations {
+                let dx = Float(candidate.x - existing.x)
+                let dy = Float(candidate.y - existing.y)
+                if dx * dx + dy * dy < minDistSq {
+                    tooClose = true
+                    break
+                }
+            }
+
+            if !tooClose {
+                locations.append(candidate)
+            }
+        }
+
+        return locations
+    }
+
     private func findCityLocations(
         heightmap: [Float],
         biomeMap: [UInt8],
