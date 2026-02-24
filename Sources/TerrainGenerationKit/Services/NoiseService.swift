@@ -16,10 +16,48 @@ public protocol NoiseServiceProtocol: Sendable {
 }
 
 public final class NoiseService: NoiseServiceProtocol, @unchecked Sendable {
-    
-    public init() {}
-    
+
+    private let gpuNoiseGenerator: GPUNoiseGenerator?
+    private let gpuProcessor: GPUHeightmapProcessor?
+
+    public init() {
+        if let gpu = GPUComputeEngine.shared {
+            self.gpuNoiseGenerator = GPUNoiseGenerator(gpu: gpu)
+            self.gpuProcessor = GPUHeightmapProcessor(gpu: gpu)
+        } else {
+            self.gpuNoiseGenerator = nil
+            self.gpuProcessor = nil
+        }
+    }
+
     public func generateNoise(
+        width: Int,
+        height: Int,
+        parameters: NoiseParameters,
+        seed: UInt64
+    ) async -> [Float] {
+        if let gpuResult = gpuNoiseGenerator?.generateNoiseArray(
+            width: width,
+            height: height,
+            parameters: parameters,
+            seed: seed
+        ) {
+            var result = gpuResult
+            if gpuProcessor?.normalize(&result) != true {
+                MathUtils.normalizeArray(&result)
+            }
+            return result
+        }
+
+        return await generateNoiseCPU(
+            width: width,
+            height: height,
+            parameters: parameters,
+            seed: seed
+        )
+    }
+
+    private func generateNoiseCPU(
         width: Int,
         height: Int,
         parameters: NoiseParameters,
@@ -108,6 +146,10 @@ public final class NoiseService: NoiseServiceProtocol, @unchecked Sendable {
             return first
         }
 
+        if let gpuResult = gpuProcessor?.blendLayers(layers: layers, weights: weights) {
+            return gpuResult
+        }
+
         let count = first.count
         var result = [Float](repeating: 0, count: count)
 
@@ -141,7 +183,9 @@ public final class NoiseService: NoiseServiceProtocol, @unchecked Sendable {
     }
     
     public func normalizeNoise(_ noise: inout [Float]) {
-        MathUtils.normalizeArray(&noise)
+        if gpuProcessor?.normalize(&noise) != true {
+            MathUtils.normalizeArray(&noise)
+        }
     }
     
     public func applyMask(_ noise: inout [Float], mask: [Float], strength: Float = 1.0) {

@@ -117,6 +117,22 @@ public struct MapData: Sendable {
     }
     
     public mutating func computeSteepnessMap() {
+        if let gpu = GPUComputeEngine.shared {
+            let processor = GPUHeightmapProcessor(gpu: gpu)
+            if let result = processor.computeSteepnessMap(
+                heightmap: heightmap,
+                width: width,
+                height: height
+            ) {
+                steepnessMap = result
+                return
+            }
+        }
+
+        computeSteepnessMapCPU()
+    }
+
+    private mutating func computeSteepnessMapCPU() {
         let w = width
         let h = height
         heightmap.withUnsafeBufferPointer { hm in
@@ -124,10 +140,30 @@ public struct MapData: Sendable {
                 DispatchQueue.concurrentPerform(iterations: h) { y in
                     for x in 0..<w {
                         let idx = y * w + x
-                        let left: Float = x > 0 ? hm[idx - 1] : 0
-                        let right: Float = x < w - 1 ? hm[idx + 1] : 0
-                        let up: Float = y > 0 ? hm[(y - 1) * w + x] : 0
-                        let down: Float = y < h - 1 ? hm[(y + 1) * w + x] : 0
+                        let left: Float
+                        if x > 0 {
+                            left = hm[idx - 1]
+                        } else {
+                            left = 0
+                        }
+                        let right: Float
+                        if x < w - 1 {
+                            right = hm[idx + 1]
+                        } else {
+                            right = 0
+                        }
+                        let up: Float
+                        if y > 0 {
+                            up = hm[(y - 1) * w + x]
+                        } else {
+                            up = 0
+                        }
+                        let down: Float
+                        if y < h - 1 {
+                            down = hm[(y + 1) * w + x]
+                        } else {
+                            down = 0
+                        }
                         let gx = (right - left) * 0.5
                         let gy = (down - up) * 0.5
                         buf[idx] = sqrt(gx * gx + gy * gy)

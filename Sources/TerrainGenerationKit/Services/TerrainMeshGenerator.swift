@@ -66,7 +66,9 @@ public final class TerrainMeshGenerator: TerrainMeshGeneratorProtocol {
     }
 
     private func generateMeshGPU(mapData: MapData, settings: TerrainMeshSettings) -> TerrainMeshData? {
-        guard let device, let commandQueue, let pipeline else { return nil }
+        guard let device, let commandQueue, let pipeline else {
+            return nil
+        }
 
         let step = settings.resolution.rawValue
         let mapW = mapData.width
@@ -80,7 +82,9 @@ public final class TerrainMeshGenerator: TerrainMeshGeneratorProtocol {
         let vertexBuf = device.makeBuffer(length: vertexCount * MemoryLayout<SIMD3<Float>>.stride, options: .storageModeShared),
         let normalBuf = device.makeBuffer(length: vertexCount * MemoryLayout<SIMD3<Float>>.stride, options: .storageModeShared),
         let uvBuf = device.makeBuffer(length: vertexCount * MemoryLayout<SIMD2<Float>>.stride, options: .storageModeShared)
-        else { return nil }
+        else {
+            return nil
+        }
 
         var params = MeshParams(
             mapWidth: UInt32(mapW),
@@ -90,10 +94,14 @@ public final class TerrainMeshGenerator: TerrainMeshGeneratorProtocol {
             step: UInt32(step),
             heightScale: settings.heightScale
         )
-        guard let paramBuf = device.makeBuffer(bytes: &params, length: MemoryLayout<MeshParams>.stride, options: .storageModeShared) else { return nil }
+        guard let paramBuf = device.makeBuffer(bytes: &params, length: MemoryLayout<MeshParams>.stride, options: .storageModeShared) else {
+            return nil
+        }
 
         guard let cmdBuf = commandQueue.makeCommandBuffer(),
-              let encoder = cmdBuf.makeComputeCommandEncoder() else { return nil }
+              let encoder = cmdBuf.makeComputeCommandEncoder() else {
+            return nil
+        }
 
         encoder.setComputePipelineState(pipeline)
         encoder.setBuffer(heightBuf, offset: 0, index: 0)
@@ -124,7 +132,9 @@ public final class TerrainMeshGenerator: TerrainMeshGeneratorProtocol {
         cmdBuf.commit()
         cmdBuf.waitUntilCompleted()
 
-        if cmdBuf.status == .error { return nil }
+        if cmdBuf.status == .error {
+            return nil
+        }
 
         let vPtr = vertexBuf.contents().bindMemory(to: SIMD3<Float>.self, capacity: vertexCount)
         let nPtr = normalBuf.contents().bindMemory(to: SIMD3<Float>.self, capacity: vertexCount)
