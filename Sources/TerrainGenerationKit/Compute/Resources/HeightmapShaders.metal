@@ -301,3 +301,173 @@ kernel void applyContinentalBlend(
 
     heightmap[gid] = heightmap[gid] * 0.7 + mask[gid] * 0.3;
 }
+
+struct NormalMapParams {
+    uint width;
+    uint height;
+    float strength;
+};
+
+kernel void generateNormalMapKernel(
+    device const float* heightmap [[buffer(0)]],
+    device float* normals [[buffer(1)]],
+    constant NormalMapParams& params [[buffer(2)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= params.width || gid.y >= params.height) {
+        return;
+    }
+
+    uint idx = gid.y * params.width + gid.x;
+
+    float left;
+    if (gid.x > 0) {
+        left = heightmap[idx - 1];
+    } else {
+        left = heightmap[idx];
+    }
+
+    float right;
+    if (gid.x < params.width - 1) {
+        right = heightmap[idx + 1];
+    } else {
+        right = heightmap[idx];
+    }
+
+    float up;
+    if (gid.y > 0) {
+        up = heightmap[idx - params.width];
+    } else {
+        up = heightmap[idx];
+    }
+
+    float down;
+    if (gid.y < params.height - 1) {
+        down = heightmap[idx + params.width];
+    } else {
+        down = heightmap[idx];
+    }
+
+    float dx = (right - left) * params.strength;
+    float dy = (down - up) * params.strength;
+    float3 normal = normalize(float3(-dx, -dy, 1.0));
+
+    uint outIdx = idx * 3;
+    normals[outIdx] = normal.x;
+    normals[outIdx + 1] = normal.y;
+    normals[outIdx + 2] = normal.z;
+}
+
+struct AOParams {
+    uint width;
+    uint height;
+    int radius;
+    float intensity;
+};
+
+kernel void generateAmbientOcclusionKernel(
+    device const float* heightmap [[buffer(0)]],
+    device float* ao [[buffer(1)]],
+    constant AOParams& params [[buffer(2)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= params.width || gid.y >= params.height) {
+        return;
+    }
+
+    uint idx = gid.y * params.width + gid.x;
+    float h = heightmap[idx];
+    float occlusion = 0.0;
+    float samples = 0.0;
+
+    for (int dy = -params.radius; dy <= params.radius; dy++) {
+        for (int dx = -params.radius; dx <= params.radius; dx++) {
+            if (dx == 0 && dy == 0) {
+                continue;
+            }
+            int nx = int(gid.x) + dx;
+            int ny = int(gid.y) + dy;
+            if (nx >= 0 && nx < int(params.width) && ny >= 0 && ny < int(params.height)) {
+                uint nidx = uint(ny) * params.width + uint(nx);
+                float nh = heightmap[nidx];
+                if (nh > h) {
+                    float dist = sqrt(float(dx * dx + dy * dy));
+                    float heightDiff = nh - h;
+                    occlusion += heightDiff / dist;
+                }
+                samples += 1.0;
+            }
+        }
+    }
+
+    if (samples > 0.0) {
+        float normalizedOcclusion = min(occlusion / samples * params.intensity, 1.0);
+        ao[idx] = 1.0 - normalizedOcclusion;
+    } else {
+        ao[idx] = 1.0;
+    }
+}
+
+struct SteepnessParams {
+    uint width;
+    uint height;
+    float invMaxSteepness;
+};
+
+kernel void computeSteepnessKernel(
+    device const float* heightmap [[buffer(0)]],
+    device float* steepness [[buffer(1)]],
+    constant SteepnessParams& params [[buffer(2)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= params.width || gid.y >= params.height) {
+        return;
+    }
+
+    uint idx = gid.y * params.width + gid.x;
+
+    float left;
+    if (gid.x > 0) {
+        left = heightmap[idx - 1];
+    } else {
+        left = 0.0;
+    }
+
+    float right;
+    if (gid.x < params.width - 1) {
+        right = heightmap[idx + 1];
+    } else {
+        right = 0.0;
+    }
+
+    float up;
+    if (gid.y > 0) {
+        up = heightmap[idx - params.width];
+    } else {
+        up = 0.0;
+    }
+
+    float down;
+    if (gid.y < params.height - 1) {
+        down = heightmap[idx + params.width];
+    } else {
+        down = 0.0;
+    }
+
+    float gx = (right - left) * 0.5;
+    float gy = (down - up) * 0.5;
+    steepness[idx] = sqrt(gx * gx + gy * gy);
+}
+
+kernel void normalizeSteepnessKernel(
+    device float* steepness [[buffer(0)]],
+    constant SteepnessParams& params [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint count = params.width * params.height;
+    if (gid >= count) {
+        return;
+    }
+
+    steepness[gid] *= params.invMaxSteepness;
+}

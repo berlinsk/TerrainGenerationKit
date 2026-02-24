@@ -124,6 +124,29 @@ public final class PostProcessingService: PostProcessingServiceProtocol, @unchec
         height: Int,
         strength: Float = 1.0
     ) -> [SIMD3<Float>] {
+        if let result = gpuProcessor?.generateNormalMap(
+            heightmap: heightmap,
+            width: width,
+            height: height,
+            strength: strength
+        ) {
+            return result
+        }
+
+        return generateNormalMapCPU(
+            heightmap: heightmap,
+            width: width,
+            height: height,
+            strength: strength
+        )
+    }
+
+    private func generateNormalMapCPU(
+        heightmap: [Float],
+        width: Int,
+        height: Int,
+        strength: Float
+    ) -> [SIMD3<Float>] {
         var normals = [SIMD3<Float>](repeating: SIMD3(0, 0, 1), count: width * height)
 
         normals.withUnsafeMutableBufferPointer { buf in
@@ -131,10 +154,30 @@ public final class PostProcessingService: PostProcessingServiceProtocol, @unchec
                 DispatchQueue.concurrentPerform(iterations: height) { y in
                     for x in 0..<width {
                         let idx = y * width + x
-                        let left = x > 0 ? hm[idx - 1] : hm[idx]
-                        let right = x < width - 1 ? hm[idx + 1] : hm[idx]
-                        let up = y > 0 ? hm[idx - width] : hm[idx]
-                        let down = y < height - 1 ? hm[idx + width] : hm[idx]
+                        let left: Float
+                        if x > 0 {
+                            left = hm[idx - 1]
+                        } else {
+                            left = hm[idx]
+                        }
+                        let right: Float
+                        if x < width - 1 {
+                            right = hm[idx + 1]
+                        } else {
+                            right = hm[idx]
+                        }
+                        let up: Float
+                        if y > 0 {
+                            up = hm[idx - width]
+                        } else {
+                            up = hm[idx]
+                        }
+                        let down: Float
+                        if y < height - 1 {
+                            down = hm[idx + width]
+                        } else {
+                            down = hm[idx]
+                        }
                         let dx = (right - left) * strength
                         let dy = (down - up) * strength
                         var normal = SIMD3<Float>(-dx, -dy, 1)
@@ -154,6 +197,32 @@ public final class PostProcessingService: PostProcessingServiceProtocol, @unchec
         height: Int,
         radius: Int = 3,
         intensity: Float = 1.0
+    ) -> [Float] {
+        if let result = gpuProcessor?.generateAmbientOcclusion(
+            heightmap: heightmap,
+            width: width,
+            height: height,
+            radius: radius,
+            intensity: intensity
+        ) {
+            return result
+        }
+
+        return generateAmbientOcclusionCPU(
+            heightmap: heightmap,
+            width: width,
+            height: height,
+            radius: radius,
+            intensity: intensity
+        )
+    }
+
+    private func generateAmbientOcclusionCPU(
+        heightmap: [Float],
+        width: Int,
+        height: Int,
+        radius: Int,
+        intensity: Float
     ) -> [Float] {
         var ao = [Float](repeating: 1, count: width * height)
 

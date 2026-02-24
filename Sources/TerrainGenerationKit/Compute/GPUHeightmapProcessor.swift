@@ -54,6 +54,25 @@ final class GPUHeightmapProcessor: @unchecked Sendable {
         var radius: Int32
     }
 
+    struct NormalMapParams {
+        var width: UInt32
+        var height: UInt32
+        var strength: Float
+    }
+
+    struct AOParams {
+        var width: UInt32
+        var height: UInt32
+        var radius: Int32
+        var intensity: Float
+    }
+
+    struct SteepnessParams {
+        var width: UInt32
+        var height: UInt32
+        var invMaxSteepness: Float
+    }
+
     func blendLayers(
         layers: [[Float]],
         weights: [Float]
@@ -595,5 +614,196 @@ final class GPUHeightmapProcessor: @unchecked Sendable {
 
         bufferA.copyTo(&array)
         return true
+    }
+
+    func generateNormalMap(
+        heightmap: [Float],
+        width: Int,
+        height: Int,
+        strength: Float
+    ) -> [SIMD3<Float>]? {
+        let count = width * height
+
+        guard let pipeline = gpu.pipeline(for: "generateNormalMapKernel") else {
+            return nil
+        }
+
+        guard let heightmapBuf = gpu.makeBuffer(from: heightmap, width: width, height: height),
+              let normalsBuf = gpu.makeBuffer(type: Float.self, count: count * 3) else {
+            return nil
+        }
+        defer {
+            gpu.recycle(heightmapBuf)
+            gpu.recycle(normalsBuf)
+        }
+
+        var params = NormalMapParams(
+            width: UInt32(width),
+            height: UInt32(height),
+            strength: strength
+        )
+        guard let paramsBuf = gpu.device.makeBuffer(
+            bytes: &params,
+            length: MemoryLayout<NormalMapParams>.stride,
+            options: .storageModeShared
+        ) else {
+            return nil
+        }
+
+        let success = gpu.encode(
+            pipeline: pipeline,
+            buffers: [
+                (heightmapBuf.buffer, 0),
+                (normalsBuf.buffer, 1),
+                (paramsBuf, 2)
+            ],
+            gridWidth: width,
+            gridHeight: height
+        )
+        guard success else {
+            return nil
+        }
+
+        let rawFloats: [Float] = normalsBuf.toArray()
+        var normals = [SIMD3<Float>](repeating: .zero, count: count)
+        for i in 0..<count {
+            let base = i * 3
+            normals[i] = SIMD3(rawFloats[base], rawFloats[base + 1], rawFloats[base + 2])
+        }
+        return normals
+    }
+
+    func generateAmbientOcclusion(
+        heightmap: [Float],
+        width: Int,
+        height: Int,
+        radius: Int,
+        intensity: Float
+    ) -> [Float]? {
+        let count = width * height
+
+        guard let pipeline = gpu.pipeline(for: "generateAmbientOcclusionKernel") else {
+            return nil
+        }
+
+        guard let heightmapBuf = gpu.makeBuffer(from: heightmap, width: width, height: height),
+              let aoBuf = gpu.makeBuffer(type: Float.self, count: count) else {
+            return nil
+        }
+        defer {
+            gpu.recycle(heightmapBuf)
+            gpu.recycle(aoBuf)
+        }
+
+        var params = AOParams(
+            width: UInt32(width),
+            height: UInt32(height),
+            radius: Int32(radius),
+            intensity: intensity
+        )
+        guard let paramsBuf = gpu.device.makeBuffer(
+            bytes: &params,
+            length: MemoryLayout<AOParams>.stride,
+            options: .storageModeShared
+        ) else {
+            return nil
+        }
+
+        let success = gpu.encode(
+            pipeline: pipeline,
+            buffers: [
+                (heightmapBuf.buffer, 0),
+                (aoBuf.buffer, 1),
+                (paramsBuf, 2)
+            ],
+            gridWidth: width,
+            gridHeight: height
+        )
+        guard success else {
+            return nil
+        }
+
+        return aoBuf.toArray()
+    }
+
+    func computeSteepnessMap(
+        heightmap: [Float],
+        width: Int,
+        height: Int
+    ) -> [Float]? {
+        let count = width * height
+
+        guard let gradientPipeline = gpu.pipeline(for: "computeSteepnessKernel"),
+              let normalizePipeline = gpu.pipeline(for: "normalizeSteepnessKernel") else {
+            return nil
+        }
+
+        guard let heightmapBuf = gpu.makeBuffer(from: heightmap, width: width, height: height),
+              let steepnessBuf = gpu.makeBuffer(type: Float.self, count: count) else {
+            return nil
+        }
+        defer {
+            gpu.recycle(heightmapBuf)
+            gpu.recycle(steepnessBuf)
+        }
+
+        var gradientParams = SteepnessParams(
+            width: UInt32(width),
+            height: UInt32(height),
+            invMaxSteepness: 0
+        )
+        guard let gradientParamsBuf = gpu.device.makeBuffer(
+            bytes: &gradientParams,
+            length: MemoryLayout<SteepnessParams>.stride,
+            options: .storageModeShared
+        ) else {
+            return nil
+        }
+
+        let gradientOk = gpu.encode(
+            pipeline: gradientPipeline,
+            buffers: [
+                (heightmapBuf.buffer, 0),
+                (steepnessBuf.buffer, 1),
+                (gradientParamsBuf, 2)
+            ],
+            gridWidth: width,
+            gridHeight: height
+        )
+        guard gradientOk else {
+            return nil
+        }
+
+        let rawSteepness: [Float] = steepnessBuf.toArray()
+        guard let maxVal = rawSteepness.max(), maxVal > 0 else {
+            return rawSteepness
+        }
+
+        var normalizeParams = SteepnessParams(
+            width: UInt32(width),
+            height: UInt32(height),
+            invMaxSteepness: 1.0 / maxVal
+        )
+        guard let normalizeParamsBuf = gpu.device.makeBuffer(
+            bytes: &normalizeParams,
+            length: MemoryLayout<SteepnessParams>.stride,
+            options: .storageModeShared
+        ) else {
+            return nil
+        }
+
+        let normalizeOk = gpu.encode1D(
+            pipeline: normalizePipeline,
+            buffers: [
+                (steepnessBuf.buffer, 0),
+                (normalizeParamsBuf, 1)
+            ],
+            count: count
+        )
+        guard normalizeOk else {
+            return nil
+        }
+
+        return steepnessBuf.toArray()
     }
 }
