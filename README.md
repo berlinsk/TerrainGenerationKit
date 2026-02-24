@@ -141,6 +141,9 @@ let mesh = meshGenerator.generateMesh(from: map, settings: TerrainMeshSettings(
 
 ## Changelog
 
+### 1.0.5
+Entire generation pipeline moved to Metal compute shaders(41 new kernel) with massive speedups. Erosion went from O(iterations) sequential to O(iterations/batchsize) parallel, water flow from O(NlogN) sort to O(n * passes) iterative relaxation, road pathfinding from O(W*H) brute-force to O(corridor) bounded wavefront. GPU-first with CPU fallback on every stage. Fixed NaN in fractal noise when max amplitude is zero
+
 ### 1.0.4
 Massive performance improvements through chunked parallelism and unsafe buffer pointers. Generation now 2-5x faster on large maps. Parallelized noise generation, hydraulic erosion(batched via TaskGroup), smoothing, biome processing and post-processing. Fixed release build crash in temperature/humidity generation
 
