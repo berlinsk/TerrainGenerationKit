@@ -19,11 +19,17 @@ public protocol HeightmapServiceProtocol: Sendable {
 }
 
 public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendable {
-    
+
     private let noiseService: NoiseService
-    
+    private let gpuProcessor: GPUHeightmapProcessor?
+
     public init(noiseService: NoiseService = NoiseService()) {
         self.noiseService = noiseService
+        if let gpu = GPUComputeEngine.shared {
+            self.gpuProcessor = GPUHeightmapProcessor(gpu: gpu)
+        } else {
+            self.gpuProcessor = nil
+        }
     }
     
     public func generateHeightmap(
@@ -99,9 +105,11 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
             type: params.type
         )
 
-        MathUtils.normalizeArray(&heightmap)
+        if gpuProcessor?.normalize(&heightmap) != true {
+            MathUtils.normalizeArray(&heightmap)
+        }
     }
-    
+
     private func applyGenerationMode(
         heightmap: inout [Float],
         width: Int,
@@ -147,6 +155,16 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         height: Int,
         seaLevel: Float
     ) {
+        if gpuProcessor?.applyRadialMask(
+            &heightmap,
+            width: width,
+            height: height,
+            falloff: 1.5,
+            blend: 0.3
+        ) == true {
+            return
+        }
+
         let mask = noiseService.generateGradientMask(
             width: width,
             height: height,
@@ -172,10 +190,20 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         width: Int,
         height: Int
     ) {
+        let coastWidth = Float(min(width, height)) * 0.15
+        if gpuProcessor?.applyIslandMask(
+            &heightmap,
+            width: width,
+            height: height,
+            coastWidth: coastWidth
+        ) == true {
+            return
+        }
+
         let mask = noiseService.generateGradientMask(
             width: width,
             height: height,
-            type: .island(coastWidth: Float(min(width, height)) * 0.15)
+            type: .island(coastWidth: coastWidth)
         )
         let nc = max(1, ProcessInfo.processInfo.activeProcessorCount)
         heightmap.withUnsafeMutableBufferPointer { buf in
@@ -198,6 +226,14 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         height: Int,
         seaLevel: Float
     ) {
+        if gpuProcessor?.applyPangaeaMask(
+            &heightmap,
+            width: width,
+            height: height
+        ) == true {
+            return
+        }
+
         let centerX = Float(width) / 2
         let centerY = Float(height) / 2
         let maxDist = min(centerX, centerY) * 0.8
@@ -230,6 +266,16 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         passes: Int,
         strength: Float
     ) {
+        if gpuProcessor?.smooth(
+            &heightmap,
+            width: width,
+            height: height,
+            passes: passes,
+            strength: strength
+        ) == true {
+            return
+        }
+
         for _ in 0..<passes {
             var smoothed = heightmap
             heightmap.withUnsafeBufferPointer { src in
@@ -242,7 +288,9 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
                             var count: Float = 1
                             for dy in -1...1 {
                                 for dx in -1...1 {
-                                    if dx == 0 && dy == 0 { continue }
+                                    if dx == 0 && dy == 0 {
+                                        continue
+                                    }
                                     sum += src[(y + dy) * width + (x + dx)]
                                     count += 1
                                 }
@@ -262,6 +310,14 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         sharpness: Float
     ) {
         guard steps > 0 else {
+            return
+        }
+
+        if gpuProcessor?.applyTerracing(
+            &heightmap,
+            steps: steps,
+            sharpness: sharpness
+        ) == true {
             return
         }
 
@@ -285,6 +341,8 @@ public final class HeightmapService: HeightmapServiceProtocol, @unchecked Sendab
         guard strength != 1.0 else {
             return
         }
-        MathUtils.applyContrast(&heightmap, strength: strength)
+        if gpuProcessor?.applyContrast(&heightmap, strength: strength) != true {
+            MathUtils.applyContrast(&heightmap, strength: strength)
+        }
     }
 }

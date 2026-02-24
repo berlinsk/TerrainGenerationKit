@@ -31,11 +31,20 @@ public protocol BiomeServiceProtocol: Sendable {
 }
 
 public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
-    
+
     private let noiseService: NoiseService
-    
+    private let gpuClimate: GPUClimateGenerator?
+    private let gpuBiome: GPUBiomeClassifier?
+
     public init(noiseService: NoiseService = NoiseService()) {
         self.noiseService = noiseService
+        if let gpu = GPUComputeEngine.shared {
+            self.gpuClimate = GPUClimateGenerator(gpu: gpu)
+            self.gpuBiome = GPUBiomeClassifier(gpu: gpu)
+        } else {
+            self.gpuClimate = nil
+            self.gpuBiome = nil
+        }
     }
     
     public func generateBiomes(
@@ -48,6 +57,20 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
         params: BiomeParameters,
         selection: BiomeSelection
     ) -> [UInt8] {
+        if let gpuBiome = gpuBiome,
+           let result = gpuBiome.classifyBiomes(
+               heightmap: heightmap,
+               temperatureMap: temperatureMap,
+               humidityMap: humidityMap,
+               waterData: waterData,
+               width: width,
+               height: height,
+               params: params,
+               selection: selection
+           ) {
+            return result
+        }
+
         let classifier = BiomeClassifier(parameters: params)
         var biomeMap = [UInt8](repeating: 0, count: width * height)
 
@@ -81,7 +104,7 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
                 }
             }
         }
-        
+
         smoothBiomeTransitions(
             biomeMap: &biomeMap,
             heightmap: heightmap,
@@ -89,7 +112,7 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
             height: height,
             params: params
         )
-        
+
         return biomeMap
     }
     
@@ -153,9 +176,20 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
             parameters: noiseParams,
             seed: seed
         )
-        
+
         noiseService.normalizeNoise(&temperatureNoise)
-        
+
+        if let gpuClimate = gpuClimate,
+           let result = gpuClimate.generateTemperatureMap(
+               heightmap: heightmap,
+               noise: temperatureNoise,
+               width: width,
+               height: height,
+               temperatureVariation: params.temperatureVariation
+           ) {
+            return result
+        }
+
         var temperatureMap = [Float](repeating: 0, count: width * height)
 
         temperatureMap.withUnsafeMutableBufferPointer { buf in
@@ -204,8 +238,6 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
         )
         
         noiseService.normalizeNoise(&humidityNoise)
-        
-        var humidityMap = [Float](repeating: 0, count: width * height)
 
         let waterDistance = calculateWaterDistance(
             heightmap: heightmap,
@@ -213,6 +245,20 @@ public final class BiomeService: BiomeServiceProtocol, @unchecked Sendable {
             height: height,
             seaLevel: params.seaLevel
         )
+
+        if let gpuClimate = gpuClimate,
+           let result = gpuClimate.generateHumidityMap(
+               heightmap: heightmap,
+               noise: humidityNoise,
+               waterDistance: waterDistance,
+               width: width,
+               height: height,
+               humidityVariation: params.humidityVariation
+           ) {
+            return result
+        }
+
+        var humidityMap = [Float](repeating: 0, count: width * height)
 
         humidityMap.withUnsafeMutableBufferPointer { buf in
             heightmap.withUnsafeBufferPointer { hm in

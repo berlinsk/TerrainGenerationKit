@@ -5,7 +5,8 @@ public final class RoadGenerator: @unchecked Sendable {
     
     private let params: CityGenerationParameters
     private var rng: SeededRandom
-    
+    private let gpuCity: GPUCityProcessor?
+
     private struct TerrainCost {
         static let deepWater: Float = 10000
         static let shallowWater: Float = 500
@@ -25,6 +26,11 @@ public final class RoadGenerator: @unchecked Sendable {
     public init(params: CityGenerationParameters, seed: UInt64) {
         self.params = params
         self.rng = SeededRandom(seed: seed)
+        if let gpu = GPUComputeEngine.shared {
+            self.gpuCity = GPUCityProcessor(gpu: gpu)
+        } else {
+            self.gpuCity = nil
+        }
     }
     
     public func generateRoads(
@@ -39,7 +45,7 @@ public final class RoadGenerator: @unchecked Sendable {
         guard cities.count >= 2 else {
             return []
         }
-        
+
         let costMap = buildCostMap(
             heightmap: heightmap,
             biomeMap: biomeMap,
@@ -49,31 +55,54 @@ public final class RoadGenerator: @unchecked Sendable {
             height: height,
             seaLevel: seaLevel
         )
-        
+
         let connections = findMinimumSpanningTree(
             cities: cities,
             costMap: costMap,
             width: width,
             height: height
         )
-        
+
+        let roadFinder: GPURoadFinder?
+        if let gpuCity = gpuCity {
+            roadFinder = gpuCity.createRoadFinder(
+                costMap: costMap,
+                width: width,
+                height: height,
+                roadDiscount: TerrainCost.existingRoad
+            )
+        } else {
+            roadFinder = nil
+        }
+
         var roads: [Road] = []
         var existingRoadTiles = Set<SIMD2<Int>>()
-        
+
         for (fromIdx, toIdx) in connections {
             let fromCity = cities[fromIdx]
             let toCity = cities[toIdx]
-            
-            if let path = findPathOptimized(
-                from: fromCity.center,
-                to: toCity.center,
-                costMap: costMap,
-                existingRoads: existingRoadTiles,
-                width: width,
-                height: height
-            ) {
+
+            var path: [SIMD2<Int>]?
+            if let roadFinder = roadFinder {
+                path = roadFinder.findPath(
+                    from: fromCity.center,
+                    to: toCity.center
+                )
+            }
+            if path == nil {
+                path = findPathOptimized(
+                    from: fromCity.center,
+                    to: toCity.center,
+                    costMap: costMap,
+                    existingRoads: existingRoadTiles,
+                    width: width,
+                    height: height
+                )
+            }
+
+            if let path = path {
                 let smoothedPath = smoothPath(path, costMap: costMap, width: width, height: height)
-                
+
                 var road = Road(from: fromCity.id, to: toCity.id, path: smoothedPath)
                 road.hasBridge = pathCrossesWater(
                     path: smoothedPath,
@@ -81,9 +110,11 @@ public final class RoadGenerator: @unchecked Sendable {
                     heightmap: heightmap,
                     seaLevel: seaLevel
                 )
-                
+
                 roads.append(road)
-                
+
+                roadFinder?.markRoadTiles(smoothedPath)
+
                 for point in smoothedPath {
                     existingRoadTiles.insert(point)
                     for dx in -1...1 {
@@ -94,25 +125,36 @@ public final class RoadGenerator: @unchecked Sendable {
                 }
             }
         }
-        
+
         if cities.count > 4 {
             let additionalConnections = findAdditionalConnections(
                 cities: cities,
                 existingConnections: connections
             )
-            
+
             for (fromIdx, toIdx) in additionalConnections {
                 let fromCity = cities[fromIdx]
                 let toCity = cities[toIdx]
-                
-                if let path = findPathOptimized(
-                    from: fromCity.center,
-                    to: toCity.center,
-                    costMap: costMap,
-                    existingRoads: existingRoadTiles,
-                    width: width,
-                    height: height
-                ) {
+
+                var path: [SIMD2<Int>]?
+                if let roadFinder = roadFinder {
+                    path = roadFinder.findPath(
+                        from: fromCity.center,
+                        to: toCity.center
+                    )
+                }
+                if path == nil {
+                    path = findPathOptimized(
+                        from: fromCity.center,
+                        to: toCity.center,
+                        costMap: costMap,
+                        existingRoads: existingRoadTiles,
+                        width: width,
+                        height: height
+                    )
+                }
+
+                if let path = path {
                     let smoothedPath = smoothPath(path, costMap: costMap, width: width, height: height)
                     var road = Road(from: fromCity.id, to: toCity.id, path: smoothedPath)
                     road.hasBridge = pathCrossesWater(
@@ -122,14 +164,16 @@ public final class RoadGenerator: @unchecked Sendable {
                         seaLevel: seaLevel
                     )
                     roads.append(road)
-                    
+
+                    roadFinder?.markRoadTiles(smoothedPath)
+
                     for point in smoothedPath {
                         existingRoadTiles.insert(point)
                     }
                 }
             }
         }
-        
+
         return roads
     }
     
@@ -142,6 +186,61 @@ public final class RoadGenerator: @unchecked Sendable {
         height: Int,
         seaLevel: Float
     ) -> [Float] {
+        var costMap: [Float]
+
+        if let gpuCity = gpuCity,
+           let gpuResult = gpuCity.buildTerrainCostMap(
+               heightmap: heightmap,
+               biomeMap: biomeMap,
+               riverMask: waterData.riverMask,
+               lakeMask: waterData.lakeMask,
+               width: width, height: height,
+               seaLevel: seaLevel
+           ) {
+            costMap = gpuResult
+        } else {
+            costMap = buildTerrainCostMapCPU(
+                heightmap: heightmap,
+                biomeMap: biomeMap,
+                waterData: waterData,
+                width: width, height: height,
+                seaLevel: seaLevel
+            )
+        }
+
+        var blockIndices = Set<Int>(minimumCapacity: 2048)
+        let gateSet: Set<SIMD2<Int>> = cities.reduce(into: []) {
+            $0.formUnion($1.gateTiles)
+        }
+        for city in cities {
+            for tile in city.allOccupiedTiles() {
+                guard tile.x >= 0 && tile.x < width && tile.y >= 0 && tile.y < height else {
+                    continue
+                }
+                blockIndices.insert(tile.y * width + tile.x)
+            }
+            for tile in city.wallTiles where !gateSet.contains(tile) {
+                guard tile.x >= 0 && tile.x < width && tile.y >= 0 && tile.y < height else {
+                    continue
+                }
+                blockIndices.insert(tile.y * width + tile.x)
+            }
+        }
+        for idx in blockIndices {
+            costMap[idx] = max(costMap[idx], 120)
+        }
+
+        return costMap
+    }
+
+    private func buildTerrainCostMapCPU(
+        heightmap: [Float],
+        biomeMap: [UInt8],
+        waterData: WaterData,
+        width: Int,
+        height: Int,
+        seaLevel: Float
+    ) -> [Float] {
         var costMap = [Float](repeating: 1, count: width * height)
 
         for y in 0..<height {
@@ -149,9 +248,9 @@ public final class RoadGenerator: @unchecked Sendable {
                 let idx = y * width + x
                 let h = heightmap[idx]
                 let biome = BiomeType(rawValue: Int(biomeMap[idx])) ?? .grassland
-                
+
                 var cost: Float = TerrainCost.plain
-                
+
                 if waterData.riverMask[idx] > 0.5 {
                     cost = TerrainCost.river
                 } else if waterData.lakeMask[idx] > 0.5 {
@@ -194,41 +293,19 @@ public final class RoadGenerator: @unchecked Sendable {
                     case .marsh:
                         cost = TerrainCost.marsh
                     }
-                    
+
                     if h > 0.7 {
                         cost += (h - 0.7) * TerrainCost.highHill * 3
                     } else if h > 0.55 {
                         cost += (h - 0.55) * TerrainCost.hill
                     }
-                    
+
                     let slope = calculateSlope(heightmap: heightmap, x: x, y: y, width: width, height: height)
                     cost += slope * 20
                 }
-                
-                if costMap[idx] < 50000 {
-                    costMap[idx] = cost
-                }
-            }
-        }
 
-        var blockIndices = Set<Int>(minimumCapacity: 2048)
-        let gateSet: Set<SIMD2<Int>> = cities.reduce(into: []) { $0.formUnion($1.gateTiles) }
-        for city in cities {
-            for tile in city.allOccupiedTiles() {
-                guard tile.x >= 0 && tile.x < width && tile.y >= 0 && tile.y < height else {
-                    continue
-                }
-                blockIndices.insert(tile.y * width + tile.x)
+                costMap[idx] = cost
             }
-            for tile in city.wallTiles where !gateSet.contains(tile) {
-                guard tile.x >= 0 && tile.x < width && tile.y >= 0 && tile.y < height else {
-                    continue
-                }
-                blockIndices.insert(tile.y * width + tile.x)
-            }
-        }
-        for idx in blockIndices {
-            costMap[idx] = max(costMap[idx], 120)
         }
 
         return costMap
